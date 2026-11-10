@@ -1,4 +1,4 @@
-import { ArrowUp, Bookmark, Clock, House, Search } from 'lucide-react'
+import { ArrowUp, Bookmark, Clock, House, Mail, Megaphone, Phone, Search } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Link, NavLink } from 'react-router-dom'
 import { PUBLISHERS, SECTIONS } from '../lib/feed/sources'
@@ -83,6 +83,37 @@ export function Footer() {
             publisher that reported it.
           </p>
           <p className="mt-4 text-[15px] font-bold">180news.co.za</p>
+          <address className="mt-3 not-italic">
+            <h2 className="sr-only">Contact the newsroom</h2>
+            <ul>
+              <li>
+                <a href="mailto:newsroom@180news.co.za" className="inline-flex min-h-11 items-center gap-2.5 text-[15px] font-semibold text-white hover:underline">
+                  <Mail size={17} strokeWidth={2.2} className="shrink-0 text-white/75" aria-hidden="true" />
+                  <span className="sr-only">Email: </span>
+                  <span className="break-all">newsroom@180news.co.za</span>
+                </a>
+              </li>
+              <li>
+                <a href="tel:+27816596218" className="inline-flex min-h-11 items-center gap-2.5 text-[15px] font-semibold tabular-nums text-white hover:underline">
+                  <Phone size={17} strokeWidth={2.2} className="shrink-0 text-white/75" aria-hidden="true" />
+                  <span className="sr-only">Phone: </span>
+                  +2781 659 6218
+                </a>
+              </li>
+            </ul>
+          </address>
+          <div className="mt-4 max-w-sm border border-white/25 bg-white/10 px-4 py-3">
+            <h2 className="flex items-center gap-2.5 text-sm font-black uppercase tracking-[0.06em]">
+              <Megaphone size={17} strokeWidth={2.2} className="shrink-0 text-white/75" aria-hidden="true" />
+              Advertise with us
+            </h2>
+            <p className="text-[15px] text-white/85">
+              Call:{' '}
+              <a href="tel:+27816596218" className="inline-flex min-h-11 items-center font-bold tabular-nums text-white hover:underline">
+                +2781 659 6218
+              </a>
+            </p>
+          </div>
         </div>
 
         <nav aria-label="Footer sections" className="md:col-span-3">

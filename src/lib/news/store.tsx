@@ -94,7 +94,7 @@ function byNewest(a: NewsItem, b: NewsItem): number {
 const NewsContext = createContext<NewsContextValue | null>(null)
 
 export function NewsProvider({ children }: { children: ReactNode }) {
-  const { settings, shownArticles: articles, liveAt } = useControl()
+  const { settings, shownArticles: articles, liveAt, readers } = useControl()
   const { hiddenSections, hiddenSources } = settings
   const refreshMs = settings.refreshMinutes * 60_000
   const [boot] = useState(readCache)
@@ -335,8 +335,9 @@ export function NewsProvider({ children }: { children: ReactNode }) {
   }, [feeds, ready, refreshing, now])
 
   const value = useMemo<NewsContextValue>(
-    () => ({ ready, refreshing, now, feeds, ...derived, status, pendingCount, applyPending, refresh }),
-    [ready, refreshing, now, feeds, derived, status, pendingCount, applyPending, refresh],
+    // Pages wait for the site's own articles as well as the feeds, so the lead story does not change under the reader.
+    () => ({ ready: ready && readers.state !== 'loading', refreshing, now, feeds, ...derived, status, pendingCount, applyPending, refresh }),
+    [ready, readers.state, refreshing, now, feeds, derived, status, pendingCount, applyPending, refresh],
   )
 
   return <NewsContext.Provider value={value}>{children}</NewsContext.Provider>

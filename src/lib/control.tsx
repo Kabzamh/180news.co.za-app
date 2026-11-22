@@ -529,7 +529,10 @@ export function ControlProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
-    fetch(PUBLISHED_URL, { cache: 'no-cache' })
+    // The front page waits for this small file, so a stalled connection must not hold it up for long.
+    const giveUp = new AbortController()
+    const timer = window.setTimeout(() => giveUp.abort(), 5000)
+    fetch(PUBLISHED_URL, { cache: 'no-cache', signal: giveUp.signal })
       .then((res) => (res.ok && (res.headers.get('content-type') ?? '').includes('json') ? res.json() : Promise.reject(new Error('unavailable'))))
       .then((data: unknown) => {
         if (cancelled) return
@@ -544,8 +547,10 @@ export function ControlProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         if (!cancelled) setSite((prev) => ({ ...prev, state: 'error' }))
       })
+      .finally(() => window.clearTimeout(timer))
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
   }, [commitRemoved])
 

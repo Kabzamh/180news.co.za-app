@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronRight, ExternalLink } from 'lucide-react'
 import { useNews } from '../lib/news/store'
 import type { Article } from '../lib/news/parse'
@@ -15,6 +15,7 @@ import { SectionHeading } from '../components/SectionHeading'
 import { StoryCard, StoryLine } from '../components/StoryCard'
 import { AdSlot } from '../components/AdSlot'
 import { LinkEmbeds } from '../components/LinkEmbeds'
+import { useStoryComments, postComment, type ReaderComment } from '../lib/comments'
 
 
 function MediaFigure({ media }: { media: NonNullable<Article['media']>[number] }) {
@@ -66,6 +67,163 @@ function MediaGallery({ media, position }: { media: NonNullable<Article['media']
         <MediaFigure key={m.id} media={m} />
       ))}
     </div>
+  )
+}
+
+const COMMENT_FIELD = 'w-full border border-ink/35 bg-paper px-3.5 text-base text-ink placeholder:text-muted'
+
+function CommentItem({ comment }: { comment: ReaderComment }) {
+  const { now } = useNews()
+  return (
+    <li className="py-4 first:pt-0">
+      <p className="text-[14px] leading-5">
+        <span className="font-extrabold text-ink">{comment.name}</span>
+        {comment.at !== null && (
+          <span className="text-muted">
+            {' \u00b7 '}
+            <time dateTime={new Date(comment.at).toISOString()} title={formatFull(comment.at)}>
+              {timeAgo(comment.at, now)}
+            </time>
+          </span>
+        )}
+      </p>
+      <p className="mt-1.5 whitespace-pre-line text-[16px] leading-relaxed text-body">{comment.body}</p>
+    </li>
+  )
+}
+
+function StoryComments({ cmsId }: { cmsId: number }) {
+  const { state, loading, failed, reload } = useStoryComments(cmsId)
+  const [name, setName] = useState('')
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+
+  if (loading && !state) {
+    return (
+      <section aria-labelledby="story-comments" className="mt-10 border-t border-line pt-8">
+        <h2 id="story-comments" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">
+          Comments
+        </h2>
+        <p className="mt-4 text-[14px] text-muted">Loading comments\u2026</p>
+      </section>
+    )
+  }
+
+  if (failed || !state) return null
+
+  if (!state.open) {
+    return (
+      <section aria-labelledby="story-comments" className="mt-10 border-t border-line pt-8">
+        <h2 id="story-comments" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">
+          Comments
+        </h2>
+        <p className="mt-4 text-[15px] text-muted">Comments are closed on this story.</p>
+      </section>
+    )
+  }
+
+  const count = state.comments.length
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const cleanName = name.trim()
+    const cleanText = text.trim()
+    if (cleanName.length < 2) {
+      setNote({ tone: 'error', text: 'Enter your name.' })
+      return
+    }
+    if (cleanText.length < 2) {
+      setNote({ tone: 'error', text: 'Write your comment.' })
+      return
+    }
+    setSending(true)
+    setNote(null)
+    const result = await postComment(cmsId, cleanName.slice(0, 60), cleanText.slice(0, 800))
+    setSending(false)
+    if (result.ok) {
+      setText('')
+      setNote({
+        tone: 'ok',
+        text: 'Thank you \u2014 your comment was sent to the newsroom and appears once it has been approved.',
+      })
+      reload()
+    } else {
+      setNote({ tone: 'error', text: result.error ?? 'The comment could not be sent just now.' })
+    }
+  }
+
+  return (
+    <section aria-labelledby="story-comments" className="mt-10 border-t border-line pt-8">
+      <h2 id="story-comments" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">
+        Comments{count > 0 ? ` \u00b7 ${count}` : ''}
+      </h2>
+
+      {count > 0 ? (
+        <ul className="mt-3 divide-y divide-line">
+          {state.comments.map((comment, index) => (
+            <CommentItem key={`${comment.name}-${comment.at ?? index}-${index}`} comment={comment} />
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-[15px] text-muted">
+          No comments yet. Be the first to have your say \u2014 comments are checked by the newsroom before they appear.
+        </p>
+      )}
+
+      <form
+        className="mt-6 space-y-3 border border-line bg-wash p-5"
+        onSubmit={(event) => {
+          void submit(event)
+        }}
+      >
+        <p className="text-[14px] font-extrabold text-navy">Have your say</p>
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,16rem)_1fr]">
+          <div>
+            <label htmlFor="comment-name" className="sr-only">
+              Your name
+            </label>
+            <input
+              id="comment-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name"
+              maxLength={60}
+              autoComplete="name"
+              className={`${COMMENT_FIELD} h-12`}
+            />
+          </div>
+          <div>
+            <label htmlFor="comment-body" className="sr-only">
+              Your comment
+            </label>
+            <textarea
+              id="comment-body"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Write your comment"
+              maxLength={800}
+              rows={3}
+              className={`${COMMENT_FIELD} resize-y`}
+            />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="submit"
+            disabled={sending}
+            className="inline-flex h-12 cursor-pointer items-center gap-2 bg-brand px-6 text-[15px] font-extrabold text-white hover:bg-brand-strong disabled:cursor-progress disabled:opacity-70"
+          >
+            {sending ? 'Sending\u2026' : 'Post comment'}
+          </button>
+          <p className="text-[12.5px] text-muted">Comments are moderated by the newsroom before they appear.</p>
+        </div>
+        {note && (
+          <p role={note.tone === 'error' ? 'alert' : 'status'} className={`text-[14px] font-bold ${note.tone === 'error' ? 'text-brand' : 'text-[#0b5a2e]'}`}>
+            {note.text}
+          </p>
+        )}
+      </form>
+    </section>
   )
 }
 
@@ -284,6 +442,8 @@ export default function Story() {
               </ul>
             </div>
           )}
+
+          {isCms && /^cms-\d+$/.test(item.id) && <StoryComments cmsId={Number(item.id.slice(4))} />}
 
           {source && (
             <p className="mt-4 border-t border-line pt-4 text-sm text-muted">

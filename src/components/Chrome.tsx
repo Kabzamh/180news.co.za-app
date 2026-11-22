@@ -126,6 +126,31 @@ export function BottomNav() {
 }
 
 // -- footer ------------------------------------------------------------------
+/** The newsroom's official accounts (fill-based brand glyphs keep the row consistent). */
+const SOCIALS: { label: string; href: string; path: string }[] = [
+  {
+    label: 'Facebook',
+    href: 'https://www.facebook.com/profile.php?id=61577988715628',
+    path: 'M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z',
+  },
+  {
+    label: 'X (Twitter)',
+    href: 'https://x.com/180DegreesNews',
+    path: 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z',
+  },
+  {
+    label: 'Instagram',
+    href: 'https://www.instagram.com/180degressnews/',
+    path: 'M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z',
+  },
+  {
+    label: 'WhatsApp channel',
+    href: 'https://whatsapp.com/channel/0029VbBLaNJLY6d9zl6t6Z43',
+    path: 'M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.666.134-.181.298-.46.446-.689.149-.229.223-.347.335-.521.111-.174.074-.348-.037-.521-.111-.174-.978-2.349-1.341-3.208-.363-.858-.752-.735-.996-.75-.242-.013-.512-.016-.782-.016-.27 0-.705.101-1.074.475-.369.374-1.408 1.376-1.408 3.357s1.441 3.886 1.642 4.157c.2.271 2.83 4.318 6.855 5.051.956.169 1.703.231 2.283.284.963.092 1.836-.164 2.435-.655.6-.492.963-1.352.963-2.285 0-.284-.149-1.126-.423-1.458-.274-.333-1.006-.669-1.202-.817zM12.05 2C6.495 2 2 6.495 2 12.05c0 1.765.462 3.493 1.34 5.01L2 22l5.07-1.32a10.02 10.02 0 0 0 4.98 1.32c5.555 0 10.05-4.495 10.05-10.05S17.605 2 12.05 2zm0 18.1c-1.51 0-2.99-.405-4.28-1.17l-.31-.185-3.09.81.825-3.01-.2-.315a8.06 8.06 0 0 1-1.235-4.29c0-4.455 3.63-8.085 8.09-8.085 2.16 0 4.19.845 5.72 2.37a8.03 8.03 0 0 1 2.365 5.715c0 4.455-3.63 8.085-8.085 8.085z',
+  },
+]
+
+
 export function SiteFooter() {
   const year = new Date().getFullYear()
   const { settings, sections } = useControl()
@@ -140,6 +165,28 @@ export function SiteFooter() {
           <p className="mt-5 max-w-sm text-[15px] leading-relaxed text-white/85">
             180news brings the latest headlines from South African and international newsrooms onto one front page. Every story links to the publisher that reported it.
           </p>
+          <div className="mt-5">
+            <h2 className="text-sm font-black uppercase tracking-[0.06em]">Follow 180news</h2>
+            <ul className="mt-3 flex gap-2">
+              {SOCIALS.map((social) => (
+                <li key={social.label}>
+                  <a
+                    href={social.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`180news on ${social.label}`}
+                    title={social.label}
+                    className="grid size-11 place-items-center border border-white/25 bg-white/10 text-white transition-colors hover:bg-white hover:text-navy-deep"
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                      <path d={social.path} />
+                    </svg>
+                    <span className="sr-only">(opens in a new tab)</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
           <p className="mt-4 text-[15px] font-bold">180news.co.za</p>
           <address className="mt-3 not-italic">
             <h2 className="sr-only">Contact the newsroom</h2>

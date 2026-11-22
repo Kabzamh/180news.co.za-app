@@ -1,15 +1,14 @@
-import { Bookmark, Search } from 'lucide-react'
 import { Fragment, useEffect, useRef } from 'react'
-import type { FormEvent } from 'react'
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { areaForPath } from '../lib/auth'
-import { useControl } from '../lib/control'
-import { todayLabel } from '../lib/format'
+import { Bookmark, Search } from 'lucide-react'
 import { useNews } from '../lib/news/store'
+import { useControl } from '../lib/control'
 import { useSaved } from '../lib/saved'
-import { HeaderAd, TopBanner } from './AdSlot'
+import { areaForPath } from '../lib/adminAreas'
+import { formatLongDate } from '../lib/format'
+import { LiveStatus, RatesInline, WeatherWidget } from './Widgets'
 import { Ticker } from './Ticker'
-import { LiveStatus, RatesInline, WeatherChip } from './Widgets'
+import { HeaderAd, TopBanner } from './AdSlot'
 
 export function Logo({ className = '' }: { className?: string }) {
   return (
@@ -20,14 +19,14 @@ export function Logo({ className = '' }: { className?: string }) {
   )
 }
 
-function TopStrip() {
+function TopBar() {
   const { now } = useNews()
   return (
     <div className="on-dark bg-navy-deep text-[12.5px] text-white">
       <div className="wrap flex h-10 items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-5">
-          <p className="hidden shrink-0 font-semibold md:block">{todayLabel(now)}</p>
-          <WeatherChip />
+          <p className="hidden shrink-0 font-semibold md:block">{formatLongDate(now)}</p>
+          <WeatherWidget />
         </div>
         <div className="flex items-center gap-6">
           <RatesInline className="hidden lg:flex" />
@@ -38,30 +37,26 @@ function TopStrip() {
   )
 }
 
-/** `compact` keeps the full search box for wide screens only, leaving the search icon to make room beside the logo. */
-function SearchForm({ compact = false }: { compact?: boolean }) {
+function HeaderSearch({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate()
   const location = useLocation()
   const [params] = useSearchParams()
-  const current = location.pathname === '/search' ? (params.get('q') ?? '') : ''
-
-  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    const q = String(new FormData(e.currentTarget).get('q') ?? '').trim()
+  const defaultValue = location.pathname === '/search' ? (params.get('q') ?? '') : ''
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const q = String(new FormData(event.currentTarget).get('q') ?? '').trim()
     navigate(q ? `/search?q=${encodeURIComponent(q)}` : '/search')
   }
-
   return (
-    <form role="search" onSubmit={onSubmit} className={`hidden w-full max-w-sm items-stretch ${compact ? 'lg:flex' : 'md:flex'}`}>
+    <form role="search" onSubmit={submit} className={`hidden w-full max-w-sm items-stretch ${compact ? 'lg:flex' : 'md:flex'}`}>
       <label htmlFor="site-search" className="sr-only">
         Search headlines
       </label>
       <input
         id="site-search"
-        key={current}
         name="q"
         type="search"
-        defaultValue={current}
+        defaultValue={defaultValue}
         placeholder="Search headlines"
         autoComplete="off"
         className="h-11 min-w-0 flex-1 border border-r-0 border-line bg-wash px-3.5 text-[15px] placeholder:text-muted focus:bg-paper"
@@ -78,15 +73,15 @@ function SectionNav() {
   const { sections } = useControl()
   const { pathname } = useLocation()
 
-  // Keep the active section in view inside the horizontal scroller.
   useEffect(() => {
     const list = listRef.current
-    const active = list?.querySelector<HTMLElement>('[aria-current="page"]')
+    const active = list?.querySelector('[aria-current="page"]')
     if (!list || !active) return
-    list.scrollLeft = active.offsetLeft - (list.clientWidth - active.offsetWidth) / 2
+    const box = active as HTMLElement
+    list.scrollLeft = box.offsetLeft - (list.clientWidth - box.offsetWidth) / 2
   }, [pathname])
 
-  const item = ({ isActive }: { isActive: boolean }) =>
+  const linkClass = ({ isActive }: { isActive: boolean }) =>
     `relative flex h-12 items-center whitespace-nowrap px-3 text-[15px] font-bold transition-colors after:absolute after:inset-x-3 after:bottom-1.5 after:h-[3px] after:rounded-full after:content-[''] ${
       isActive ? 'text-brand after:bg-brand' : 'text-ink hover:text-brand'
     }`
@@ -101,25 +96,25 @@ function SectionNav() {
               className="no-scrollbar relative flex overflow-x-auto pr-6 [mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)] lg:pr-0 lg:[mask-image:none]"
             >
               <li>
-                <NavLink to="/" end className={item}>
+                <NavLink to="/" end className={linkClass}>
                   Top stories
                 </NavLink>
               </li>
               <li>
-                <NavLink to="/latest" className={item}>
+                <NavLink to="/latest" className={linkClass}>
                   Latest
                 </NavLink>
               </li>
-              {sections.map((s) => (
-                <Fragment key={s.id}>
+              {sections.map((section) => (
+                <Fragment key={section.id}>
                   <li>
-                    <NavLink to={`/section/${s.id}`} className={item}>
-                      {s.label}
+                    <NavLink to={`/section/${section.id}`} className={linkClass}>
+                      {section.label}
                     </NavLink>
                   </li>
-                  {s.id === 'elections' && (
+                  {section.id === 'elections' && (
                     <li>
-                      <NavLink to="/results" className={item}>
+                      <NavLink to="/results" className={linkClass}>
                         IEC results
                       </NavLink>
                     </li>
@@ -135,27 +130,24 @@ function SectionNav() {
   )
 }
 
-export function Header() {
+export function SiteHeader() {
   const { saved } = useSaved()
   const { ads, settings } = useControl()
   const { pathname } = useLocation()
-  // Adverts are for readers: they are left off the sign-in, article form and admin pages.
-  const publicPage = areaForPath(pathname) === null
-  const showAd = settings.adsOn && ads.header.enabled && publicPage
+  const isPublic = areaForPath(pathname) === null
+  const headerAd = settings.adsOn && ads.header.enabled && isPublic
   return (
     <>
-      {/* The top banner sits directly above the navigation bar (below), unless Ads control puts it at the very top of the page. */}
-      {publicPage && <TopBanner at="verytop" />}
+      {isPublic && <TopBanner at="verytop" />}
       <header>
-        <TopStrip />
-        <div className={`wrap flex items-center py-2 md:gap-8 md:py-3 ${showAd ? 'gap-3' : 'gap-4'}`}>
+        <TopBar />
+        <div className={`wrap flex items-center py-2 md:gap-8 md:py-3 ${headerAd ? 'gap-3' : 'gap-4'}`}>
           <Link to="/" aria-label="180news — home" className="shrink-0">
             <Logo className="h-[52px] w-auto md:h-[76px]" />
           </Link>
-          {/* In the logo row on every screen: it takes the space between the logo and the search. */}
-          {showAd && <HeaderAd className="flex-1" />}
-          <div className={`ml-auto flex items-center justify-end gap-3 ${showAd ? 'flex-none lg:w-[26rem]' : 'flex-1'}`}>
-            <SearchForm compact={showAd} />
+          {headerAd && <HeaderAd className="flex-1" />}
+          <div className={`ml-auto flex items-center justify-end gap-3 ${headerAd ? 'flex-none lg:w-[26rem]' : 'flex-1'}`}>
+            <HeaderSearch compact={headerAd} />
             <Link
               to="/saved"
               className="hidden h-11 shrink-0 items-center gap-2 border border-line px-4 text-[15px] font-bold transition-colors hover:border-brand hover:text-brand md:inline-flex"
@@ -169,13 +161,17 @@ export function Header() {
                 </span>
               )}
             </Link>
-            <Link to="/search" aria-label="Search headlines" className={`grid size-11 place-items-center rounded-full text-ink hover:bg-wash ${showAd ? 'lg:hidden' : 'md:hidden'}`}>
+            <Link
+              to="/search"
+              aria-label="Search headlines"
+              className={`grid size-11 place-items-center rounded-full text-ink hover:bg-wash ${headerAd ? 'lg:hidden' : 'md:hidden'}`}
+            >
               <Search size={22} strokeWidth={2.3} aria-hidden="true" />
             </Link>
           </div>
         </div>
       </header>
-      {publicPage && <TopBanner at="abovemenu" />}
+      {isPublic && <TopBanner at="abovemenu" />}
       <SectionNav />
     </>
   )

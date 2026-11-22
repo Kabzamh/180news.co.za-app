@@ -1,31 +1,25 @@
-import { ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { ChevronRight } from 'lucide-react'
 import { useControl } from '../lib/control'
-import { stamp } from '../lib/format'
-import { count, useNationalResults } from '../lib/iecClient'
+import { useIecNational } from '../lib/iec'
 import { useNews } from '../lib/news/store'
+import { formatNum, formatAt } from '../lib/format'
 
-const PARTIES = 6
-const link = 'inline-flex h-11 items-center gap-1.5 border-2 border-navy px-4 text-sm font-extrabold text-navy transition-colors hover:bg-navy hover:text-white'
+const CARD_COUNT = 6
+const CHIP = 'inline-flex h-11 items-center gap-1.5 border-2 border-navy px-4 text-sm font-extrabold text-navy transition-colors hover:bg-navy hover:text-white'
 
-/**
- * The IEC's results at a glance, for the Elections update on the front page:
- * the largest parties' share of the vote and council seats, kept up to date on
- * the same schedule as the news feeds.
- */
 export function ResultsBrief({ className = '' }: { className?: string }) {
   const { settings } = useControl()
   const { now } = useNews()
-  const { results } = useNationalResults(settings.refreshMinutes)
-  const data = results.state === 'ready' ? results.data : null
-  const t = data?.totals
-
-  const parties = data ? data.parties.filter((p) => p.id > 0).slice(0, PARTIES) : []
-  const valid = t?.validVotes || 1
-  const share = (votes: number) => (votes / valid) * 100
-  const top = Math.max(...parties.map((p) => share(p.votes)), 1)
-  const undecided = t ? t.councils - t.majority - t.hung : 0
-  const asAt = data?.reportedAt ? ` · figures as at ${stamp(data.reportedAt, now)}` : ''
+  const { results } = useIecNational(settings.refreshMinutes)
+  const data = results.state === 'ready' ? results.data : undefined
+  const totals = data?.totals
+  const parties = data ? data.parties.filter((p) => p.id > 0).slice(0, CARD_COUNT) : []
+  const validVotes = totals?.validVotes || 1
+  const share = (votes: number): number => (votes / validVotes) * 100
+  const maxShare = Math.max(...parties.map((p) => share(p.votes)), 1)
+  const pending = totals ? totals.councils - totals.majority - totals.hung : 0
+  const asAt = data?.reportedAt ? ` · figures as at ${formatAt(data.reportedAt, now)}` : ''
 
   return (
     <section aria-labelledby="home-results" className={`border border-brand/25 bg-paper p-4 sm:p-5 ${className}`}>
@@ -59,58 +53,59 @@ export function ResultsBrief({ className = '' }: { className?: string }) {
 
       {results.state === 'loading' && (
         <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-3 lg:grid-cols-6" aria-hidden="true">
-          {Array.from({ length: PARTIES }, (_, i) => (
+          {Array.from({ length: CARD_COUNT }, (_, i) => (
             <div key={i} className="h-[88px] animate-pulse bg-line/70 motion-reduce:animate-none" />
           ))}
         </div>
       )}
 
-      {data && t && (
+      {data && totals && (
         <>
           <ul className="mt-4 grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-3 lg:grid-cols-6">
-            {parties.map((p) => (
-              <li key={p.id} className="flex flex-col">
-                <span className="text-[25px] font-black leading-none tabular-nums tracking-[-0.01em] sm:text-[27px]">{share(p.votes).toFixed(2)}%</span>
-                <span className="mt-1.5 text-[14.5px] font-extrabold leading-snug">{p.name}</span>
+            {parties.map((party) => (
+              <li key={party.id} className="flex flex-col">
+                <span className="text-[25px] font-black leading-none tabular-nums tracking-[-0.01em] sm:text-[27px]">{share(party.votes).toFixed(2)}%</span>
+                <span className="mt-1.5 text-[14.5px] font-extrabold leading-snug">{party.name}</span>
                 <span className="mt-auto block pt-2" aria-hidden="true">
                   <span className="block h-1.5 bg-line">
-                    <span className="block h-full bg-navy" style={{ width: `${(share(p.votes) / top) * 100}%` }} />
+                    <span className="block h-full bg-navy" style={{ width: `${(share(party.votes) / maxShare) * 100}%` }} />
                   </span>
                 </span>
-                <span className="mt-1.5 text-[13.5px] tabular-nums text-body">{count(p.seats)} council seats</span>
+                <span className="mt-1.5 text-[13.5px] tabular-nums text-body">{formatNum(party.seats)} council seats</span>
               </li>
             ))}
           </ul>
           <p className="mt-4 border-t border-line pt-3 text-[14.5px] leading-relaxed text-body">
-            <span className="font-bold text-ink">{count(t.councils)} councils:</span> {t.majority} won outright,{' '}
+            <span className="font-bold text-ink">{formatNum(totals.councils)} councils:</span> {formatNum(totals.majority)} won outright,
+            {' '}
             <Link to="/results?result=hung#results-councils" className="font-bold text-navy underline underline-offset-[3px]">
-              {t.hung} hung
+              {formatNum(totals.hung)} hung
             </Link>
-            {undecided > 0 ? `, ${undecided} still being decided` : ''}. {count(t.seatsAllocated)} of {count(t.seats)} seats allocated. Share is of all
-            valid votes on the ward and PR ballots.
+            {pending > 0 ? `, ${formatNum(pending)} still being decided` : ''}. {formatNum(totals.seatsAllocated)} of {formatNum(totals.seats)} seats allocated. Share is of
+            all valid votes on the ward and PR ballots.
           </p>
         </>
       )}
 
       <ul className="mt-3 flex flex-wrap gap-2.5">
         <li>
-          <Link to="/results" className={link}>
-            Full results, council by council <ArrowRight size={15} strokeWidth={2.6} aria-hidden="true" />
+          <Link to="/results" className={CHIP}>
+            Full results, council by council <ChevronRight size={15} strokeWidth={2.6} aria-hidden="true" />
           </Link>
         </li>
         <li>
-          <Link to="/results/party" className={link}>
-            Results by party <ArrowRight size={15} strokeWidth={2.6} aria-hidden="true" />
+          <Link to="/results/party" className={CHIP}>
+            Results by party <ChevronRight size={15} strokeWidth={2.6} aria-hidden="true" />
           </Link>
         </li>
         <li>
-          <Link to="/results#results-coalitions" className={link}>
-            Possible coalitions <ArrowRight size={15} strokeWidth={2.6} aria-hidden="true" />
+          <Link to="/results#results-coalitions" className={CHIP}>
+            Possible coalitions <ChevronRight size={15} strokeWidth={2.6} aria-hidden="true" />
           </Link>
         </li>
         <li>
-          <Link to="/results/seats" className={link}>
-            Seat calculator and coalitions <ArrowRight size={15} strokeWidth={2.6} aria-hidden="true" />
+          <Link to="/results/seats" className={CHIP}>
+            Seat calculator and coalitions <ChevronRight size={15} strokeWidth={2.6} aria-hidden="true" />
           </Link>
         </li>
       </ul>

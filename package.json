@@ -1,16 +1,13 @@
 {
-  "name": "180news",
+  "name": "vite-react-ts",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/published.mjs && npm run build:api && tsc -b && vite build",
+    "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "build:api": "esbuild src/server/feed.ts src/server/iec.ts --bundle --platform=node --format=esm --target=node20 --outdir=api --log-level=warning",
-    "snapshot": "esbuild scripts/snapshot.ts --bundle --platform=node --format=esm --target=node20 --outfile=node_modules/.tmp/snapshot.mjs --log-level=warning && node node_modules/.tmp/snapshot.mjs",
-    "snapshot:iec": "esbuild scripts/iec-snapshot.ts --bundle --platform=node --format=esm --target=node20 --outfile=node_modules/.tmp/iec-snapshot.mjs --log-level=warning && node node_modules/.tmp/iec-snapshot.mjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.1",

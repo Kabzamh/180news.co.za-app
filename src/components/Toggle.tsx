@@ -1,5 +1,16 @@
-/** An on/off switch with its label on the left. */
-export function Toggle({ label, checked, onChange, disabled = false, note }: { label: string; checked: boolean; onChange: (on: boolean) => void; disabled?: boolean; note?: string }) {
+export function Toggle({
+  label,
+  checked,
+  onChange,
+  disabled = false,
+  note,
+}: {
+  label: string
+  checked: boolean
+  onChange: (next: boolean) => void
+  disabled?: boolean
+  note?: string
+}) {
   return (
     <label className={`flex min-h-12 items-center justify-between gap-4 py-1.5 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
       <span className="text-[15.5px] font-bold">

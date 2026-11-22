@@ -1,26 +1,22 @@
-import { Bookmark, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { StoryImage } from '../components/StoryImage'
-import { useTitle } from '../lib/extras'
-import { publisherName } from '../lib/feed/sources'
-import { fullDate } from '../lib/format'
+import { Bookmark } from 'lucide-react'
 import { useSaved } from '../lib/saved'
+import { useTitle } from '../lib/weather'
+import { sourceName } from '../lib/feeds'
+import { formatFull } from '../lib/format'
+import { StoryImage } from '../components/StoryImage'
 
 export default function Saved() {
-  useTitle('Saved stories')
+  useTitle('Saved')
   const { saved, remove } = useSaved()
-
   return (
     <div className="wrap max-w-[860px] pt-7 md:pt-10">
       <header className="relative border-t border-line pt-4 before:absolute before:-top-px before:left-0 before:h-1.5 before:w-24 before:bg-brand before:content-['']">
         <h1 className="text-4xl font-black uppercase leading-none tracking-[-0.02em] md:text-5xl">Saved</h1>
         <p className="mt-2 text-[15px] text-muted" aria-live="polite">
-          {saved.length === 0
-            ? 'Your reading list, kept on this device.'
-            : `${saved.length} ${saved.length === 1 ? 'story' : 'stories'} kept on this device.`}
+          {saved.length === 0 ? 'Your reading list, kept on this device.' : `${saved.length} ${saved.length === 1 ? 'story' : 'stories'} kept on this device.`}
         </p>
       </header>
-
       {saved.length === 0 ? (
         <div className="mt-10 border border-dashed border-line bg-wash px-6 py-14 text-center">
           <Bookmark size={30} strokeWidth={2} className="mx-auto text-navy" aria-hidden="true" />
@@ -45,8 +41,8 @@ export default function Saved() {
                     </Link>
                   </h2>
                   <p className="mt-1.5 text-[12.5px] leading-5">
-                    <span className="font-extrabold uppercase tracking-[0.04em] text-brand">{publisherName(item.sourceId)}</span>
-                    {item.published !== null && <span className="text-muted"> · {fullDate(item.published)}</span>}
+                    <span className="font-extrabold uppercase tracking-[0.04em] text-brand">{sourceName(item.sourceId)}</span>
+                    {item.published !== null && <span className="text-muted"> · {formatFull(item.published)}</span>}
                   </p>
                 </div>
               </div>
@@ -57,7 +53,13 @@ export default function Saved() {
                 title="Remove from saved"
                 className="-mr-2 grid size-11 shrink-0 cursor-pointer place-items-center rounded-full text-muted hover:bg-brand-tint hover:text-brand"
               >
-                <Trash2 size={19} strokeWidth={2.2} aria-hidden="true" />
+                <svg width="19" height="19" viewBox="0 0 24 24" strokeWidth="2.2" stroke="currentColor" fill="none" aria-hidden="true">
+                  <path d="M10 11v6" />
+                  <path d="M14 11v6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
               </button>
             </li>
           ))}

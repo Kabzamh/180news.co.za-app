@@ -1,293 +1,150 @@
-import { Check, ChevronRight, Copy, ExternalLink, Eye, EyeOff, Link2, Pencil, Share2, Star } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AdSlot } from '../components/AdSlot'
-import { ArticleLinks } from '../components/LinkEmbeds'
-import { ArticleMedia } from '../components/Media'
+import { useMemo } from 'react'
+import { ChevronRight, ExternalLink } from 'lucide-react'
+import { useNews } from '../lib/news/store'
+import type { Article } from '../lib/news/parse'
+import { useControl } from '../lib/control'
+import { useSaved } from '../lib/saved'
+import { useTitle } from '../lib/weather'
+import { sourceName, SECTION_BY_ID, SOURCES } from '../lib/feeds'
+import { formatFull, timeAgo } from '../lib/format'
+import { tagHref } from '../lib/control'
+import { StoryImage } from '../components/StoryImage'
 import { SaveButton } from '../components/SaveButton'
 import { SectionHeading } from '../components/SectionHeading'
-import { StoryCard, StoryHeadline } from '../components/StoryCard'
-import { StoryImage } from '../components/StoryImage'
-import { useAuth } from '../lib/auth'
-import { articleToItem, tagPath, useControl } from '../lib/control'
-import { useTitle } from '../lib/extras'
-import { PUBLISHERS, SECTION_BY_ID, publisherName } from '../lib/feed/sources'
-import type { NewsItem } from '../lib/feed/types'
-import { fullDate, timeAgo } from '../lib/format'
-import { useNews } from '../lib/news/store'
-import { useSaved } from '../lib/saved'
+import { StoryCard, StoryLine } from '../components/StoryCard'
+import { AdSlot } from '../components/AdSlot'
+import { LinkEmbeds } from '../components/LinkEmbeds'
+
+
+function MediaFigure({ media }: { media: NonNullable<Article['media']>[number] }) {
+  if (!media.url) return null
+  const label = media.caption ?? media.credit
+  return (
+    <figure>
+      {media.kind === 'video' && (
+        <div className="overflow-hidden bg-ink">
+          <video
+            src={`${media.url}#t=0.001`}
+            controls
+            playsInline
+            preload="metadata"
+            aria-label={media.caption ?? 'Video'}
+            className="max-h-[75vh] w-full bg-ink"
+          />
+        </div>
+      )}
+      {media.kind === 'photo' && (
+        <div className="bg-wash">
+          <img src={media.url} alt={media.caption ?? ''} referrerPolicy="no-referrer" className="max-h-[80vh] w-full object-contain" />
+        </div>
+      )}
+      {media.kind === 'audio' && (
+        <div className="bg-wash px-4 py-3">
+          <audio src={media.url} controls preload="metadata" aria-label={media.caption ?? 'Audio clip'} className="w-full" />
+        </div>
+      )}
+      {label && (
+        <figcaption className="mt-2 text-[13px] text-muted">
+          {media.caption}
+          {media.caption && media.credit ? ' · ' : ''}
+          {media.credit && <span>Supplied by {media.credit}</span>}
+        </figcaption>
+      )}
+    </figure>
+  )
+}
+
+function MediaGallery({ media, position }: { media: NonNullable<Article['media']>; position: 'before' | 'after' }) {
+  const videos = media.filter((m) => m.kind === 'video' && (m.position ?? 'before') === position)
+  const others = media.filter((m) => m.kind !== 'video' && (m.position ?? 'before') === position)
+  const rows = [...videos, ...others]
+  if (!rows.length) return null
+  return (
+    <div className="mt-6 space-y-6">
+      {rows.map((m) => (
+        <MediaFigure key={m.id} media={m} />
+      ))}
+    </div>
+  )
+}
 
 export default function Story() {
   const { id = '' } = useParams()
-  const { byId, ready } = useNews()
-  const { saved } = useSaved()
+  const { byId, bySection, all, now } = useNews()
   const { articles, liveAt } = useControl()
-  const live = byId.get(id)
-  // An author can open their own article before it is on the site: scheduled, hidden, or in a switched-off section.
-  const own = live ? undefined : articles.find((a) => a.id === id)
-  const item = live ?? (own ? articleToItem(own) : saved.find((s) => s.id === id))
-  const notice = !own
-    ? undefined
-    : own.publishAt && own.publishAt > liveAt
-      ? `Preview. This article is scheduled for ${fullDate(own.publishAt)} and is not on the site yet.`
-      : 'Preview. This article is not shown on the site at the moment.'
+  const { saved } = useSaved()
 
-  if (!item) return ready ? <Gone /> : <Loading />
-  return <StoryView key={item.id} item={item} notice={notice} />
-}
+  const item = byId.get(id) ?? saved.find((a) => a.id === id)
+  const ownRecord = articles.find((a) => a.id === id)
+  const scheduled = !!ownRecord && (ownRecord.publishAt ?? 0) > liveAt
+  const hidden = !!ownRecord?.hidden
+  const exists = !!item || !!ownRecord
 
-function Loading() {
-  useTitle('Loading story')
-  return (
-    <div className="wrap max-w-3xl py-12" role="status" aria-label="Loading story">
-      <div className="h-4 w-40 animate-pulse bg-line/70 motion-reduce:animate-none" />
-      <div className="mt-5 h-10 w-11/12 animate-pulse bg-line/70 motion-reduce:animate-none" />
-      <div className="mt-3 h-10 w-2/3 animate-pulse bg-line/70 motion-reduce:animate-none" />
-      <div className="mt-8 aspect-[16/9] animate-pulse bg-line/70 motion-reduce:animate-none" />
-    </div>
-  )
-}
-
-function Gone() {
-  useTitle('Story no longer in the feed')
-  return (
-    <div className="wrap py-20 text-center">
-      <h1 className="text-3xl font-extrabold tracking-tight md:text-4xl">This story has moved on</h1>
-      <p className="mx-auto mt-3 max-w-lg text-[17px] leading-relaxed text-body">
-        180news shows what is in each publisher’s live feed, and this headline has dropped out of it. Stories you save stay available here even
-        after that happens.
-      </p>
-      <div className="mt-7 flex flex-wrap justify-center gap-3">
-        <Link to="/" className="inline-flex h-12 items-center bg-brand px-6 text-[15px] font-extrabold text-white hover:bg-brand-strong">
-          Go to top stories
-        </Link>
-        <Link to="/latest" className="inline-flex h-12 items-center border-2 border-navy px-6 text-[15px] font-extrabold text-navy hover:bg-navy hover:text-white">
-          See the latest
-        </Link>
-      </div>
-    </div>
-  )
-}
-
-function ShareRow({ item }: { item: NewsItem }) {
-  const [copied, setCopied] = useState(false)
-  const [copyFailed, setCopyFailed] = useState(false)
-  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
-
-  useEffect(() => {
-    if (!copied) return
-    const t = window.setTimeout(() => setCopied(false), 2200)
-    return () => window.clearTimeout(t)
-  }, [copied])
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(item.link)
-      setCopied(true)
-      setCopyFailed(false)
-    } catch {
-      setCopyFailed(true)
+  const related = item ? (bySection[item.section] ?? []).filter((x) => x.id !== item.id).slice(0, 6) : []
+  const more = item ? all.filter((x) => x.id !== item.id && x.image).slice(0, 4) : []
+  const readMore = useMemo(() => {
+    const taken = new Set([item?.id ?? id])
+    const out: Article[] = []
+    for (const candidate of [...related, ...all]) {
+      if (taken.has(candidate.id)) continue
+      taken.add(candidate.id)
+      out.push(candidate)
+      if (out.length >= 3) break
     }
-  }
+    return out
+  }, [related, all, item?.id])
 
-  const nativeShare = () => {
-    navigator.share({ title: item.title, url: item.link }).catch(() => {
-      /* share sheet dismissed */
-    })
-  }
+  useTitle(exists && item ? item.title : exists ? ownRecord?.title : undefined)
 
-  const url = encodeURIComponent(item.link)
-  const text = encodeURIComponent(item.title)
-  const pill = 'inline-flex h-11 cursor-pointer items-center gap-2 rounded-full border border-line px-4 text-sm font-bold text-ink transition-colors hover:border-navy hover:text-navy'
-
-  return (
-    <div>
-      <h2 className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">Share this story</h2>
-      <ul className="mt-2.5 flex flex-wrap gap-2">
-        {canShare && (
-          <li>
-            <button type="button" onClick={nativeShare} className={pill}>
-              <Share2 size={16} strokeWidth={2.3} aria-hidden="true" /> Share
-            </button>
-          </li>
-        )}
-        <li>
-          <a href={`https://wa.me/?text=${text}%20${url}`} target="_blank" rel="noopener noreferrer" className={pill}>
-            WhatsApp
-          </a>
-        </li>
-        <li>
-          <a href={`https://twitter.com/intent/tweet?text=${text}&url=${url}`} target="_blank" rel="noopener noreferrer" className={pill}>
-            X
-          </a>
-        </li>
-        <li>
-          <a href={`https://www.facebook.com/sharer/sharer.php?u=${url}`} target="_blank" rel="noopener noreferrer" className={pill}>
-            Facebook
-          </a>
-        </li>
-        <li>
-          <button type="button" onClick={copy} className={pill}>
-            {copied ? <Check size={16} strokeWidth={2.6} className="text-brand" aria-hidden="true" /> : <Link2 size={16} strokeWidth={2.3} aria-hidden="true" />}
-            {copied ? 'Link copied' : 'Copy link'}
-          </button>
-        </li>
-      </ul>
-      <p className="mt-2 min-h-5 text-sm text-body" role="status">
-        {copyFailed ? (
-          <>
-            Your browser blocked copying. The link is{' '}
-            <a href={item.link} target="_blank" rel="noopener noreferrer" className="break-all font-semibold text-navy underline">
-              {item.link}
-            </a>
-          </>
-        ) : (
-          ''
-        )}
-      </p>
-    </div>
-  )
-}
-
-/** Full text of an article written in the app, with the ways to pass it on. */
-function OwnArticle({ item }: { item: NewsItem }) {
-  const { settings, articles, liveAt, patchArticle, readerState } = useControl()
-  const [copy, setCopy] = useState<'idle' | 'done' | 'failed'>('idle')
-  const paragraphs = (item.body ?? '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
-  const linkText = `${item.tags?.length ? `\n\nTags: ${item.tags.join(', ')}` : ''}${item.links?.length ? `\n\nLinks:\n${item.links.join('\n')}` : ''}`
-  const articleText = `${item.title}\nBy ${item.author ?? 'a 180news reader'}\n\n${item.summary}\n\n${item.body ?? ''}`
-  const fullText = articleText + linkText
-  // The publishing controls are for the signed-in team; readers see the article and nothing else.
-  const { status, user } = useAuth()
-  const own = status === 'signed-in' ? articles.find((a) => a.id === item.id) : undefined
-  const canManage = user?.role === 'owner' || user?.role === 'editor'
-  const scheduled = !!own && (own.publishAt ?? 0) > liveAt
-  const reach = own ? readerState(own.id) : 'waiting'
-  const state = !own
-    ? ''
-    : own.hidden
-      ? 'Taken down. It is not on the app.'
-      : scheduled
-        ? `Scheduled. It goes live on the app on ${fullDate(own.publishAt ?? 0)}.`
-        : settings.hiddenSections.includes(own.section)
-          ? `Not on the app: the ${SECTION_BY_ID[own.section].label} section is switched off.`
-          : own.pinned
-            ? 'Live on the app, as the main headline.'
-            : 'Live on the app.'
-  const pill = 'inline-flex h-11 cursor-pointer items-center gap-2 rounded-full border border-navy/40 bg-paper px-4 text-sm font-bold text-navy transition-colors hover:border-navy'
-
-  const copyText = async () => {
-    try {
-      await navigator.clipboard.writeText(fullText)
-      setCopy('done')
-    } catch {
-      setCopy('failed')
-    }
-  }
-
-  return (
-    <>
-      <div className="mt-6 max-w-[64ch] space-y-5 text-[18px] leading-[1.7] text-body">
-        {paragraphs.map((p, i) => (
-          <p key={i} className="whitespace-pre-line">
-            {p}
-          </p>
-        ))}
-      </div>
-
-      {item.media && item.media.length > 0 && <ArticleMedia media={item.media} />}
-      {item.links && item.links.length > 0 && <ArticleLinks links={item.links} />}
-
-      {item.tags && item.tags.length > 0 && (
-        <div className="mt-8 flex flex-wrap items-center gap-2">
-          <h2 className="mr-1 text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">Tags</h2>
-          <ul className="flex flex-wrap gap-2">
-            {item.tags.map((tag) => (
-              <li key={tag}>
-                <Link to={tagPath(tag)} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm font-bold text-ink hover:border-navy hover:text-navy">
-                  {tag}
-                </Link>
-              </li>
-            ))}
-          </ul>
+  if (!exists) {
+    return (
+      <div className="wrap py-20 text-center">
+        <h1 className="text-3xl font-extrabold tracking-tight md:text-4xl">This story has moved on</h1>
+        <p className="mx-auto mt-3 max-w-lg text-[17px] leading-relaxed text-body">
+          180news shows what is in each publisher’s live feed, and this headline has dropped out of it. Stories you save stay available here even after that happens.
+        </p>
+        <div className="mt-7 flex flex-wrap justify-center gap-3">
+          <Link to="/" className="inline-flex h-12 items-center bg-brand px-6 text-[15px] font-extrabold text-white hover:bg-brand-strong">
+            Go to top stories
+          </Link>
+          <Link to="/latest" className="inline-flex h-12 items-center border-2 border-navy px-6 text-[15px] font-extrabold text-navy hover:bg-navy hover:text-white">
+            See the latest
+          </Link>
         </div>
-      )}
+      </div>
+    )
+  }
 
-      {own && (
-        <section aria-labelledby="article-publishing" className="mt-8 border-l-4 border-navy bg-navy-tint p-5 sm:p-6">
-          <h2 id="article-publishing" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-navy">
-            Publishing
-          </h2>
-          <p role="status" className="mt-1.5 max-w-[60ch] text-[16px] font-bold leading-snug text-ink">
-            {state}
-          </p>
-          {!own.hidden && !scheduled && (
-            <p className="mt-1 max-w-[60ch] text-[14.5px] leading-relaxed text-body">
-              {reach === 'live'
-                ? 'Readers on every device can see it.'
-                : reach === 'changed'
-                  ? 'Readers on other devices still see the earlier version, until the next site update.'
-                  : 'So far it shows on this device. It reaches readers on other devices with the next site update.'}{' '}
-              {reach !== 'live' &&
-                (canManage ? (
-                  <Link to="/admin#admin-readers" className="font-bold text-navy underline underline-offset-[3px]">
-                    Publish to all readers
-                  </Link>
-                ) : (
-                  'An owner or editor sends it from the Admin page.'
-                ))}
-            </p>
-          )}
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link to={`/submit?edit=${item.id}`} className={pill}>
-              <Pencil size={15} strokeWidth={2.3} aria-hidden="true" /> Edit
-            </Link>
-            {canManage && !own.hidden && !scheduled && (
-              <button type="button" aria-pressed={own.pinned} onClick={() => patchArticle(own.id, { pinned: !own.pinned })} className={pill}>
-                <Star size={15} strokeWidth={2.3} fill={own.pinned ? 'currentColor' : 'none'} aria-hidden="true" />
-                {own.pinned ? 'Remove as main headline' : 'Make main headline'}
-              </button>
-            )}
-            {canManage && !scheduled && (
-              <button type="button" onClick={() => patchArticle(own.id, { hidden: !own.hidden })} className={pill}>
-                {own.hidden ? <Eye size={15} strokeWidth={2.3} aria-hidden="true" /> : <EyeOff size={15} strokeWidth={2.3} aria-hidden="true" />}
-                {own.hidden ? 'Put back on the app' : 'Take down'}
-              </button>
-            )}
-            <button type="button" onClick={copyText} className={pill}>
-              {copy === 'done' ? <Check size={16} strokeWidth={2.6} aria-hidden="true" /> : <Copy size={16} strokeWidth={2.3} aria-hidden="true" />}
-              {copy === 'done' ? 'Text copied' : 'Copy article text'}
-            </button>
-          </div>
-          <p role="status" className="mt-2 min-h-5 text-sm text-body">
-            {copy === 'failed' ? 'Your browser blocked copying. Select the article text above and copy it by hand.' : ''}
-          </p>
-        </section>
-      )}
-    </>
-  )
-}
+  if (!item) {
+    return (
+      <div className="wrap max-w-3xl py-12" role="status" aria-label="Loading story">
+        <div className="h-4 w-40 animate-pulse bg-line/70 motion-reduce:animate-none" />
+        <div className="mt-5 h-10 w-11/12 animate-pulse bg-line/70 motion-reduce:animate-none" />
+        <div className="mt-3 h-10 w-2/3 animate-pulse bg-line/70 motion-reduce:animate-none" />
+        <div className="mt-8 aspect-[16/9] animate-pulse bg-line/70 motion-reduce:animate-none" />
+      </div>
+    )
+  }
 
-function StoryView({ item, notice }: { item: NewsItem; notice?: string }) {
-  useTitle(item.title)
-  const { bySection, all, now } = useNews()
-  const publisher = PUBLISHERS[item.sourceId]
-  const source = publisherName(item.sourceId)
+  const source = item.sourceId === '180news' ? null : SOURCES[item.sourceId]
+  const sourceLabel = sourceName(item.sourceId)
   const section = SECTION_BY_ID[item.section]
-
-  const related = useMemo(() => (bySection[item.section] ?? []).filter((i) => i.id !== item.id).slice(0, 6), [bySection, item])
-  const more = useMemo(() => {
-    const skip = new Set([item.id, ...related.map((r) => r.id)])
-    return all.filter((i) => !skip.has(i.id) && i.image).slice(0, 4)
-  }, [all, related, item.id])
+  const isOwn = !!item.body
+  const isCms = item.id.startsWith('cms-')
 
   return (
     <div className="pt-6 md:pt-9">
-      <div className="wrap grid gap-x-12 gap-y-12 lg:grid-cols-12">
-        <article className="lg:col-span-8">
-          {notice && (
+      <div className={`wrap ${isCms ? "" : "grid gap-x-12 gap-y-12 lg:grid-cols-12"}`}>
+        <article className={isCms ? "" : "lg:col-span-8"}>
+          {scheduled && (
             <p role="status" className="mb-5 border-l-4 border-warn bg-[#fdf1d4] px-4 py-3 text-[15px] font-bold leading-snug text-[#6b4a00]">
-              {notice}
+              This article is scheduled. It goes live on the front page {ownRecord?.publishAt ? formatFull(ownRecord.publishAt) : ''}. Only this device can see it.
+            </p>
+          )}
+          {hidden && (
+            <p role="status" className="mb-5 border-l-4 border-warn bg-[#fdf1d4] px-4 py-3 text-[15px] font-bold leading-snug text-[#6b4a00]">
+              This article is taken down. It is not on the app.
             </p>
           )}
           <nav aria-label="Breadcrumb">
@@ -307,11 +164,9 @@ function StoryView({ item, notice }: { item: NewsItem; notice?: string }) {
               )}
             </ol>
           </nav>
-
           <h1 className="mt-3 text-[30px] font-extrabold leading-[1.1] tracking-[-0.02em] text-balance sm:text-[40px] lg:text-[46px] lg:leading-[1.05]">
             {item.title}
           </h1>
-
           <div className="mt-5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-y border-line py-3">
             <p className="text-[15px] leading-snug text-body">
               {item.author && (
@@ -319,12 +174,12 @@ function StoryView({ item, notice }: { item: NewsItem; notice?: string }) {
                   By <span className="font-bold text-ink">{item.author}</span>,{' '}
                 </>
               )}
-              <span className="font-bold text-ink">{source}</span>
+              <span className="font-bold text-ink">{sourceLabel}</span>
               {item.published !== null && (
                 <>
                   <br />
                   <time dateTime={new Date(item.published).toISOString()} className="text-[13.5px] text-muted">
-                    {fullDate(item.published)}
+                    {formatFull(item.published)}
                     {item.published <= now ? ` · ${timeAgo(item.published, now)}` : ''}
                   </time>
                 </>
@@ -336,22 +191,44 @@ function StoryView({ item, notice }: { item: NewsItem; notice?: string }) {
           {item.image && (
             <figure className="mt-6">
               <StoryImage item={item} priority className="aspect-[16/9]" />
-              <figcaption className="mt-2 text-[13px] text-muted">{item.body ? 'Picture supplied by the author' : `Image supplied by ${source}`}</figcaption>
+              <figcaption className="mt-2 text-[13px] text-muted">
+                {item.body ? 'Picture supplied by the author' : `Image supplied by ${sourceLabel}`}
+              </figcaption>
             </figure>
           )}
 
-          {/* With no summary of its own, an article's summary is just its opening lines, which follow anyway. */}
-          {item.summary && !(item.body && item.body.replace(/\s+/g, ' ').startsWith(item.summary.replace(/…$/, ''))) && (
+          {item.summary && !isOwn && !isCms && (
             <p className="mt-6 max-w-[64ch] text-[19px] leading-[1.6] text-body sm:text-xl sm:leading-[1.6]">{item.summary}</p>
           )}
 
-          {item.body ? (
-            <OwnArticle item={item} />
+          {item.media && <MediaGallery media={item.media} position="before" />}
+
+          {isOwn ? (
+            <>
+              <div className="mt-6 max-w-[64ch] space-y-5 text-[18px] leading-[1.7] text-body">
+                {(item.body ?? '').split(/\n\s*\n/).map((paragraph, index) => (
+                  <p key={index}>{paragraph}</p>
+                ))}
+              </div>
+              {item.links && item.links.length > 0 && <LinkEmbeds links={item.links} />}
+              {ownRecord && (
+                <div className="mt-6 max-w-[64ch] rounded-sm bg-wash px-4 py-3 text-[14px] text-body">
+                  Written for 180news by {ownRecord.author}. Stored only in this browser — it shows on this device only.
+                </div>
+              )}
+              {item.media && <MediaGallery media={item.media} position="after" />}
+              {isCms && <ShareRow link={item.link} title={item.title} />}
+            </>
+          ) : isCms ? (
+            <>
+              {item.summary && <p className="mt-6 max-w-[64ch] text-[18px] leading-[1.7] text-body">{item.summary}</p>}
+              <ShareRow link={item.link} title={item.title} />
+            </>
           ) : (
             <>
               <div className="mt-8 border-l-4 border-brand bg-brand-tint p-5 sm:p-6">
                 <p className="max-w-[58ch] text-[15.5px] leading-relaxed text-body">
-                  This is {source}’s headline and summary, as published in their news feed. The full report is on their website.
+                  This is {sourceLabel}’s headline and summary, as published in their news feed. The full report is on their website.
                 </p>
                 <a
                   href={item.link}
@@ -359,37 +236,69 @@ function StoryView({ item, notice }: { item: NewsItem; notice?: string }) {
                   rel="noopener noreferrer"
                   className="mt-4 inline-flex min-h-12 items-center gap-2.5 bg-brand px-6 py-3 text-base font-extrabold text-white transition-colors hover:bg-brand-strong"
                 >
-                  Read the full story on {source}
+                  Read the full story on {sourceLabel}
                   <ExternalLink size={18} strokeWidth={2.5} aria-hidden="true" />
                   <span className="sr-only">(opens in a new tab)</span>
                 </a>
               </div>
-
-              <div className="mt-8">
-                <ShareRow item={item} />
-              </div>
+              <ShareRow link={item.link} title={item.title} />
             </>
           )}
 
-          {publisher && (
+          {!isCms && readMore.length > 0 && (
+            <section aria-labelledby="story-read-more" className="mt-8">
+              <h2 id="story-read-more" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">
+                Read more
+              </h2>
+              <ul className="mt-2.5 divide-y divide-line">
+                {readMore.map((x) => (
+                  <li key={x.id}>
+                    <Link
+                      to={`/story/${x.id}`}
+                      className="group flex min-h-11 items-center gap-2 py-2 text-[16px] font-bold text-navy underline decoration-navy/40 underline-offset-[3px] hover:decoration-navy"
+                    >
+                      <span className="min-w-0 flex-1">{x.title}</span>
+                      <ChevronRight size={16} strokeWidth={2.6} className="shrink-0 text-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {item.tags && item.tags.length > 0 && (
+            <div className="mt-8 flex flex-wrap items-center gap-2">
+              <h2 className="mr-1 text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">Tags</h2>
+              <ul className="flex flex-wrap gap-2">
+                {item.tags.map((tag) => (
+                  <li key={tag}>
+                    <Link to={tagHref(tag)} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm font-bold text-ink hover:border-navy hover:text-navy">
+                      {tag}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {source && (
             <p className="mt-4 border-t border-line pt-4 text-sm text-muted">
               More from{' '}
-              <a href={publisher.home} target="_blank" rel="noopener noreferrer" className="font-bold text-navy underline">
-                {publisher.name}
+              <a href={source.home} target="_blank" rel="noopener noreferrer" className="font-bold text-navy underline">
+                {source.name}
               </a>
             </p>
           )}
-
-          {!notice && <AdSlot id="article" at="inline" className="mt-9" />}
+          {!scheduled && <AdSlot id="article" at="inline" className="mt-9" />}
         </article>
 
-        {related.length > 0 && section && (
+        {!isCms && related.length > 0 && section && (
           <aside aria-labelledby="story-related" className="lg:col-span-4">
             <SectionHeading id="story-related" title={`More ${section.label}`} to={`/section/${section.id}`} />
             <ul className="divide-y divide-line">
-              {related.map((r) => (
-                <li key={r.id} className="py-3.5 first:pt-0">
-                  <StoryHeadline item={r} />
+              {related.map((x) => (
+                <li key={x.id} className="py-3.5 first:pt-0">
+                  <StoryLine item={x} />
                 </li>
               ))}
             </ul>
@@ -397,20 +306,48 @@ function StoryView({ item, notice }: { item: NewsItem; notice?: string }) {
         )}
       </div>
 
-      {!notice && <AdSlot id="article" at="below" className="wrap mt-12" />}
+      {!scheduled && <AdSlot id="article" at="below" className="wrap mt-12" />}
 
-      {more.length > 0 && (
+      {!isCms && more.length > 0 && (
         <section aria-labelledby="story-more" className="wrap mt-14">
           <SectionHeading id="story-more" title="Latest headlines" to="/latest" moreLabel="See all" />
           <ul className="grid grid-cols-2 gap-x-4 gap-y-7 sm:gap-x-6 lg:grid-cols-4">
-            {more.map((m) => (
-              <li key={m.id}>
-                <StoryCard item={m} size="sm" />
+            {more.map((x) => (
+              <li key={x.id}>
+                <StoryCard item={x} size="sm" />
               </li>
             ))}
           </ul>
         </section>
       )}
+    </div>
+  )
+}
+
+function ShareRow({ link, title }: { link: string; title: string }) {
+  const enc = encodeURIComponent(link)
+  const encTitle = encodeURIComponent(title)
+  const button = 'inline-flex h-11 cursor-pointer items-center gap-2 rounded-full border border-line px-4 text-sm font-bold text-ink transition-colors hover:border-navy hover:text-navy'
+  return (
+    <div className="mt-8">
+      <h2 className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">Share this story</h2>
+      <ul className="mt-2.5 flex flex-wrap gap-2">
+        <li>
+          <a href={`https://wa.me/?text=${encTitle}%20${enc}`} target="_blank" rel="noopener noreferrer" className={button}>
+            WhatsApp
+          </a>
+        </li>
+        <li>
+          <a href={`https://twitter.com/intent/tweet?text=${encTitle}&url=${enc}`} target="_blank" rel="noopener noreferrer" className={button}>
+            X
+          </a>
+        </li>
+        <li>
+          <a href={`https://www.facebook.com/sharer/sharer.php?u=${enc}`} target="_blank" rel="noopener noreferrer" className={button}>
+            Facebook
+          </a>
+        </li>
+      </ul>
     </div>
   )
 }

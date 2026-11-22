@@ -1,37 +1,30 @@
-import { Pause, Play } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useControl } from '../lib/control'
-import { publisherName } from '../lib/feed/sources'
-import { timeAgo } from '../lib/format'
+import { Pause, Play } from 'lucide-react'
 import { useNews } from '../lib/news/store'
+import { useControl } from '../lib/control'
+import { sourceName } from '../lib/feeds'
+import { timeAgo } from '../lib/format'
 
-/** Crawl speeds in pixels per second, and a rough width for one headline. */
 const SPEEDS = { slow: 38, normal: 64, fast: 104 }
-const estimateWidth = (title: string) => title.length * 8.2 + 190
+const widthOf = (title: string): number => title.length * 8.2 + 190
 
-/**
- * The newest headlines crawling across the lower row of the floating glass bar.
- * Pauses on hover, on keyboard focus and with the pause button; under
- * reduced motion it becomes a static row that scrolls by hand.
- */
 export function Ticker() {
   const { all, now } = useNews()
   const [paused, setPaused] = useState(false)
   const { settings } = useControl()
-  const message = settings.crawlMessage.trim()
+  const notice = settings.crawlMessage.trim()
   const items = all.slice(0, 12)
-  if (!settings.crawlEnabled || (items.length === 0 && !message)) return null
+  if (!settings.crawlEnabled || (items.length === 0 && !notice)) return null
+  const totalWidth = items.reduce((sum, item) => sum + widthOf(item.title), notice ? widthOf(notice) : 0)
+  const seconds = Math.max(12, Math.round(totalWidth / SPEEDS[settings.crawlSpeed]))
 
-  const width = items.reduce((sum, item) => sum + estimateWidth(item.title), message ? estimateWidth(message) : 0)
-  const duration = Math.max(12, Math.round(width / SPEEDS[settings.crawlSpeed]))
-
-  const run = (copy: boolean) => (
-    <ul aria-hidden={copy ? 'true' : undefined} className="flex shrink-0 items-center">
-      {message && (
+  const track = (hidden: boolean) => (
+    <ul aria-hidden={hidden ? true : undefined} className="flex shrink-0 items-center">
+      {notice && (
         <li className="flex shrink-0 items-center whitespace-nowrap">
           <span className="mr-2.5 rounded-full bg-white px-2.5 py-1 text-[11px] font-black uppercase leading-none tracking-[0.08em] text-navy-deep">Notice</span>
-          <span className="text-[14.5px] font-bold text-white sm:text-[15px]">{message}</span>
+          <span className="text-[14.5px] font-bold text-white sm:text-[15px]">{notice}</span>
           <span className="mx-5 size-1.5 rounded-full bg-white/55" aria-hidden="true" />
         </li>
       )}
@@ -39,13 +32,13 @@ export function Ticker() {
         <li key={item.id} className="flex shrink-0 items-center whitespace-nowrap">
           <Link
             to={`/story/${item.id}`}
-            tabIndex={copy ? -1 : undefined}
+            tabIndex={paused ? -1 : undefined}
             className="text-[14.5px] font-bold text-white decoration-white decoration-2 underline-offset-[3px] hover:underline sm:text-[15px]"
           >
             {item.title}
           </Link>
           <span className="ml-2.5 text-[12.5px] font-semibold text-white/80">
-            {publisherName(item.sourceId)} · {timeAgo(item.published, now)}
+            {sourceName(item.sourceId)} · {timeAgo(item.published, now)}
           </span>
           <span className="mx-5 size-1.5 rounded-full bg-white/55" aria-hidden="true" />
         </li>
@@ -62,13 +55,12 @@ export function Ticker() {
       <div
         className="crawl-track min-w-0 flex-1 overflow-hidden"
         onBlur={(e) => {
-          // Focusing a link can scroll the track; put it back so the loop stays seamless.
-          if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.scrollLeft = 0
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) e.currentTarget.scrollLeft = 0
         }}
       >
-        <div className="crawl flex w-max" data-paused={paused} style={{ animationDuration: `${duration}s` }}>
-          {run(false)}
-          {run(true)}
+        <div className="crawl flex w-max" data-paused={paused} style={{ animationDuration: `${seconds}s` }}>
+          {track(false)}
+          {track(true)}
         </div>
       </div>
       <button
@@ -82,4 +74,35 @@ export function Ticker() {
       </button>
     </section>
   )
+}
+
+export function NewStoriesButton() {
+  const { pendingCount, applyPending } = useNews()
+  return (
+    <div aria-live="polite" className="pointer-events-none fixed inset-x-0 top-[116px] z-50 flex justify-center px-4">
+      {pendingCount > 0 && (
+        <button
+          type="button"
+          onClick={applyPending}
+          className="rise pointer-events-auto inline-flex h-11 cursor-pointer items-center gap-2 whitespace-nowrap rounded-full bg-brand px-5 text-sm font-extrabold text-white shadow-[0_8px_24px_rgb(2_3_79_/_0.28)] hover:bg-brand-strong"
+        >
+          {pendingCount} new {pendingCount === 1 ? 'story' : 'stories'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+export function Rail() {
+  return null
+}
+
+export function useLiveTitle(title?: string): void {
+  useEffect(() => {
+    document.title = title ? `${title} | 180news` : '180news — Live South African news headlines'
+  }, [title])
+}
+
+export function useTickerRef() {
+  return useRef<HTMLUListElement>(null)
 }

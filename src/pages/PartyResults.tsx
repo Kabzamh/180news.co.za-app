@@ -1,422 +1,166 @@
-import { ArrowLeft, ArrowRight } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { majorityOf } from '../lib/coalitions'
-import { useTitle } from '../lib/extras'
-import { fullDate } from '../lib/format'
-import { IEC_EVENT, isPartyId } from '../lib/iec'
-import type { CouncilSummary, LargestParty, PartyDetail } from '../lib/iec'
-import { count, useLargestParties, useNationalResults, usePartyDirectory, usePartyResults } from '../lib/iecClient'
-
-const PAGE = 15
-const NO_COUNCILS: CouncilSummary[] = []
-const field = 'h-12 w-full border border-ink/35 bg-paper px-3.5 text-base text-ink'
-const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`
-
-function Tile({ label, value, note }: { label: string; value: string; note: string }) {
-  return (
-    <div className="border border-line bg-paper p-4">
-      <dt className="text-[12.5px] font-extrabold uppercase tracking-[0.05em] text-muted">{label}</dt>
-      <dd className="mt-1">
-        <span className="block text-[21px] font-black leading-tight tabular-nums tracking-[-0.01em] min-[420px]:text-[26px] sm:text-[30px]">{value}</span>
-        <span className="mt-0.5 block text-[13.5px] leading-snug text-body">{note}</span>
-      </dd>
-    </div>
-  )
-}
-
-/** One party: national totals, a line per province, then every council it stood in. */
-interface Position {
-  /** The party has the most seats on the council (alone or jointly). */
-  leads: boolean
-  /** With one other party (the next largest if it leads, otherwise the largest) it would reach a majority. */
-  majority: boolean
-  line: string
-}
-
-/** Where a party stands on a hung council: how far the largest party is from a majority, and what this party's seats add. */
-function coalitionPosition(partyId: number, seats: number, councilSeats: number, top: LargestParty[]): Position {
-  const needed = majorityOf(councilSeats)
-  const short = (n: number) => `${n} ${n === 1 ? 'seat' : 'seats'} short`
-  const leads = seats >= top[0].seats
-  if (!leads) {
-    const sum = seats + top[0].seats
-    const line = `Hung council. With the largest party, ${top[0].name} (${top[0].seats}), it would hold ${sum}: ${sum >= needed ? `a majority, ${needed} being needed` : `${short(needed - sum)} of the ${needed} needed`}.`
-    return { leads, majority: sum >= needed, line }
-  }
-  const partner = top.find((p) => p.id !== partyId)
-  const own = `Hung council. It is the ${partner && partner.seats === seats ? 'joint ' : ''}largest party, ${short(needed - seats)} of the ${needed} needed.`
-  if (!partner) return { leads, majority: false, line: own }
-  const sum = seats + partner.seats
-  return { leads, majority: sum >= needed, line: `${own} With ${partner.name} (${partner.seats}) it would hold ${sum}${sum >= needed ? ', a majority' : `, still ${short(needed - sum)}`}.` }
-}
-
-/** The summary sentences, worded so that small numbers read naturally. */
-function standingText(hung: number, leading: number, leadingWithOne: number, withLargest: number): string {
-  const add = 'its seats added to the largest party’s would'
-  const one = 'one more party, the next largest, would'
-  if (hung === 1) {
-    return leading === 1
-      ? `It is the largest party there, alone or jointly, and ${one} ${leadingWithOne === 1 ? '' : 'not '}give it a majority.`
-      : `It is not the largest party there, and ${add} ${withLargest === 1 ? '' : 'not '}make a majority.`
-  }
-  const others = hung - leading
-  let first = 'It is not the largest party on any of them.'
-  if (leading === 1) first = `It is the largest party, alone or jointly, on 1 of them, where ${one} ${leadingWithOne === 1 ? '' : 'not '}give it a majority.`
-  else if (leading > 1) first = `It is the largest party, alone or jointly, on ${leading} of them, and on ${leadingWithOne === leading ? 'each' : leadingWithOne === 0 ? 'none' : leadingWithOne} of those ${one} give it a majority.`
-  if (others === 0) return first
-  if (others === 1) return `${first} On the other one, ${add} ${withLargest === 1 ? '' : 'not '}make a majority.`
-  const group = leading > 0 ? `the other ${others}` : `the ${others}`
-  return `${first} ${withLargest === others ? `On all of ${group}` : withLargest === 0 ? `On none of ${group}` : `On ${withLargest} of ${group}`}, ${add} make a majority.`
-}
-
-interface DetailProps {
-  party: PartyDetail
-  totalCouncils: number | null
-  /** One line per council from the national results; empty until they have loaded. */
-  summaries: CouncilSummary[]
-  summariesState: 'loading' | 'ready' | 'error'
-}
-
-function Detail({ party, totalCouncils, summaries, summariesState }: DetailProps) {
-  const [shown, setShown] = useState(PAGE)
-  const [hungOnly, setHungOnly] = useState(false)
-  const listHeading = useRef<HTMLHeadingElement>(null)
-  const loaded = useLargestParties()
-  const largest = loaded.state === 'ready' ? loaded.data : null
-  const sorted = useMemo(() => [...party.councils].sort((a, b) => b.seats - a.seats || b.votes - a.votes), [party.councils])
-  const withSeats = sorted.filter((c) => c.seats > 0).length
-
-  // Hung councils, with every seat allocated, where this party holds at least one seat.
-  const positions = useMemo(() => {
-    const byId = new Map(summaries.map((s) => [s.id, s]))
-    const out = new Map<number, Position>()
-    for (const c of party.councils) {
-      const summary = byId.get(c.id)
-      const top = largest?.[c.id]
-      if (!summary || summary.status !== 'hung' || summary.seatsAllocated < summary.seats || c.seats === 0 || !top || top.length === 0) continue
-      out.set(c.id, coalitionPosition(party.id, c.seats, summary.seats, top))
-    }
-    return out
-  }, [party, summaries, largest])
-  const standing = [...positions.values()]
-  const leading = standing.filter((p) => p.leads)
-  const totalHung = summaries.filter((s) => s.status === 'hung').length
-  const coalitionState = loaded.state === 'error' || summariesState === 'error' ? 'error' : loaded.state === 'loading' || summariesState === 'loading' ? 'loading' : 'ready'
-  const councils = hungOnly ? sorted.filter((c) => positions.has(c.id)) : sorted
-
-  const showHung = () => {
-    setHungOnly(true)
-    setShown(PAGE)
-    // Take the reader, and keyboard focus, to the list that has just been narrowed.
-    listHeading.current?.focus()
-    listHeading.current?.scrollIntoView()
-  }
-  const th = 'px-3 py-3 font-extrabold'
-  const td = 'px-3 py-3 tabular-nums'
-
-  return (
-    <>
-      <dl className="mt-5 grid grid-cols-1 gap-4 min-[360px]:grid-cols-2 lg:grid-cols-4">
-        <Tile label="Votes" value={count(party.votes)} note={`${party.share.toFixed(2)}% of all valid votes, on the ward and PR ballots together`} />
-        <Tile label="Council seats" value={count(party.seats)} note={`${count(party.wardSeats)} ward · ${count(party.seats - party.wardSeats)} PR list`} />
-        <Tile
-          label="Councils"
-          value={count(party.councils.length)}
-          note={`stood in${totalCouncils ? `, of ${count(totalCouncils)}` : ''} · won seats on ${count(withSeats)}`}
-        />
-        <Tile label="Councils led" value={count(party.councilsLed)} note={`has the most seats · ${count(party.majorities)} with an outright majority`} />
-      </dl>
-
-      <section aria-labelledby="party-provinces" className="mt-10">
-        <h3 id="party-provinces" className="mb-3 text-xl font-extrabold tracking-tight">
-          By province
-        </h3>
-        <div className="overflow-x-auto border border-line">
-          <table className="w-full border-collapse text-left text-[15px]">
-            <caption className="sr-only">{party.name} by province</caption>
-            <thead>
-              <tr className="bg-wash text-[12.5px] uppercase tracking-[0.05em] text-muted">
-                <th scope="col" className={th}>
-                  Province
-                </th>
-                <th scope="col" className={`${th} hidden text-right sm:table-cell`}>
-                  Votes
-                </th>
-                <th scope="col" className={`${th} text-right`}>
-                  Share
-                </th>
-                <th scope="col" className={`${th} text-right`}>
-                  Seats
-                </th>
-                <th scope="col" className={`${th} hidden text-right md:table-cell`}>
-                  Councils led
-                </th>
-                <th scope="col" className={`${th} hidden text-right md:table-cell`}>
-                  Outright
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {party.provinces.map((p) => (
-                <tr key={p.name} className="border-t border-line">
-                  <th scope="row" className="px-3 py-3 font-bold leading-snug">
-                    {p.name}
-                    <span className="block text-[13px] font-normal tabular-nums text-muted sm:hidden">{count(p.votes)} votes</span>
-                  </th>
-                  <td className={`${td} hidden text-right sm:table-cell`}>{count(p.votes)}</td>
-                  <td className={`${td} text-right`}>{p.share.toFixed(2)}%</td>
-                  <td className={`${td} text-right font-extrabold`}>{count(p.seats)}</td>
-                  <td className={`${td} hidden text-right md:table-cell`}>{count(p.councilsLed)}</td>
-                  <td className={`${td} hidden text-right md:table-cell`}>{count(p.majorities)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="mt-2 text-[13.5px] leading-relaxed text-muted">Share is of the valid votes cast in that province.</p>
-      </section>
-
-      <section aria-labelledby="party-coalitions" className="mt-10">
-        <h3 id="party-coalitions" className="mb-2 text-xl font-extrabold tracking-tight">
-          Possible coalitions
-        </h3>
-        {coalitionState === 'loading' && (
-          <p role="status" className="text-[15.5px] font-bold text-body">
-            Working out where {party.name} stands on hung councils…
-          </p>
-        )}
-        {coalitionState === 'error' && (
-          <p className="max-w-[78ch] text-[15.5px] leading-relaxed text-body">
-            The figures for hung councils could not be loaded just now. Open a council below for its seats and possible coalitions.
-          </p>
-        )}
-        {coalitionState === 'ready' && standing.length === 0 && (
-          <p className="max-w-[78ch] text-[15.5px] leading-relaxed text-body">
-            {party.name} holds no seats on a hung council{totalHung > 0 ? `, of the ${totalHung} there are` : ''}, so it is not part of any coalition arithmetic.
-          </p>
-        )}
-        {coalitionState === 'ready' && standing.length > 0 && (
-          <>
-            <p className="max-w-[78ch] text-[16px] leading-relaxed text-body">
-              <span className="font-bold text-ink">
-                {party.name} holds seats on {standing.length} of the {totalHung} hung {totalHung === 1 ? 'council' : 'councils'}.
-              </span>{' '}
-              {standingText(standing.length, leading.length, leading.filter((p) => p.majority).length, standing.filter((p) => !p.leads && p.majority).length)}
-            </p>
-            <p className="mt-3 max-w-[78ch] border-l-4 border-navy bg-navy-tint px-4 py-3 text-[14.5px] leading-relaxed text-body">
-              This is arithmetic on the IEC’s seats only. It shows where seats add up to a majority, not which parties are willing to govern together.
-              {loaded.state === 'ready' && loaded.origin === 'saved' ? ` The IEC could not be reached just now, so it is worked out from a copy saved on ${fullDate(loaded.at)}.` : ''}
-            </p>
-            {!hungOnly && (
-              <button
-                type="button"
-                onClick={showHung}
-                className="mt-4 inline-flex h-11 cursor-pointer items-center gap-1.5 border-2 border-navy px-5 text-sm font-extrabold text-navy transition-colors hover:bg-navy hover:text-white"
-              >
-                Show {standing.length === 1 ? 'this council' : `these ${standing.length} councils`} <ArrowRight size={15} strokeWidth={2.6} aria-hidden="true" />
-              </button>
-            )}
-          </>
-        )}
-      </section>
-
-      <section aria-labelledby="party-councils" className="mt-10">
-        <h3 id="party-councils" ref={listHeading} tabIndex={-1} className="text-xl font-extrabold tracking-tight outline-none">
-          Council by council
-        </h3>
-        {hungOnly && (
-          <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-l-4 border-navy bg-navy-tint px-4 py-2 text-[15px] leading-snug">
-            <span>Showing only hung councils where {party.name} holds seats.</span>
-            <button type="button" onClick={() => setHungOnly(false)} className="inline-flex min-h-11 cursor-pointer items-center font-bold text-navy underline underline-offset-[3px]">
-              Show all councils
-            </button>
-          </p>
-        )}
-        <p className="mt-1 text-[14.5px] text-muted" aria-live="polite">
-          {plural(councils.length, 'council', 'councils')}, most seats first.
-        </p>
-        <ul className="mt-3 divide-y divide-line border-y border-line">
-          {councils.slice(0, shown).map((c) => {
-            const majority = c.seats * 2 > c.councilSeats
-            const position = positions.get(c.id)
-            return (
-              <li key={c.id} className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-4">
-                <div className="min-w-0 flex-1 basis-64">
-                  <h4 className="text-[18px] font-extrabold leading-tight">
-                    {c.name}
-                    {(majority || c.leads) && (
-                      <span className={`ml-2 inline-block rounded-full px-2.5 py-0.5 align-middle text-[12px] font-bold ${majority ? 'bg-[#dff5e8] text-[#0b5a2e]' : 'bg-[#fdf1d4] text-[#6b4a00]'}`}>
-                        {majority ? 'Outright majority' : 'Largest party'}
-                      </span>
-                    )}
-                  </h4>
-                  <p className="mt-0.5 text-[13.5px] text-muted">
-                    {c.code && `${c.code} · `}
-                    {c.province}
-                  </p>
-                  <p className="mt-1 text-[15px] leading-snug text-body">
-                    <span className="font-bold text-ink">
-                      {c.seats} of {c.councilSeats} seats
-                    </span>{' '}
-                    ({c.wardSeats} ward, {c.seats - c.wardSeats} PR list) · {count(c.votes)} votes, {c.share.toFixed(2)}%
-                  </p>
-                  {position && <p className="mt-1 text-[15px] leading-snug text-body">{position.line}</p>}
-                </div>
-                <Link
-                  to={`/results/seats?council=${c.id}`}
-                  aria-label={`${position ? 'Seats and possible coalitions' : 'Seat calculation'} for ${c.name}`}
-                  className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full border border-line px-4 text-sm font-bold text-ink transition-colors hover:border-navy hover:text-navy"
-                >
-                  {position ? 'Seats and coalitions' : 'Seat calculation'} <ArrowRight size={15} strokeWidth={2.5} aria-hidden="true" />
-                </Link>
-              </li>
-            )
-          })}
-        </ul>
-        {councils.length > shown && (
-          <div className="mt-8 text-center">
-            <button
-              type="button"
-              onClick={() => setShown((n) => n + PAGE)}
-              className="inline-flex h-12 cursor-pointer items-center border-2 border-navy px-7 text-[15px] font-extrabold text-navy transition-colors hover:bg-navy hover:text-white"
-            >
-              Show more councils ({councils.length - shown} left)
-            </button>
-          </div>
-        )}
-      </section>
-    </>
-  )
-}
+import { useEffect, useMemo, useState } from 'react'
+import { useControl } from '../lib/control'
+import { useTitle } from '../lib/weather'
+import { computePartyProbe, loadPartyList, type PartyMeta, type PartyProbe } from '../lib/iec'
+import { formatNum } from '../lib/format'
 
 export default function PartyResults() {
-  const [params, setParams] = useSearchParams()
-  const param = Number(params.get('party'))
-  const partyId = isPartyId(param) ? param : null
-  const { results } = useNationalResults()
-  const directory = usePartyDirectory()
-  const party = usePartyResults(partyId)
-  useTitle(party?.state === 'ready' ? `${party.data.name} results` : 'Results by party')
+  useTitle('Results by party')
+  const { settings } = useControl()
+  const [parties, setParties] = useState<PartyMeta[]>([])
+  const [probe, setProbe] = useState<{ id: number; result: { state: string; data?: PartyProbe; origin?: string } } | null>(null)
+  const [selected, setSelected] = useState<number | null>(null)
+  const [onlyLeads, setOnlyLeads] = useState(false)
 
-  const largest = results.state === 'ready' ? results.data.parties.filter((p) => p.id > 0) : []
-  const totalCouncils = results.state === 'ready' ? results.data.totals.councils : null
-  const known = partyId !== null && (largest.some((p) => p.id === partyId) || !!directory?.some((p) => p.id === partyId))
+  useEffect(() => {
+    let cancelled = false
+    loadPartyList().then((list) => {
+      if (cancelled) return
+      setParties(list)
+      setSelected((current) => current ?? list[0]?.id ?? null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (selected === null) return
+    let cancelled = false
+    setProbe({ id: selected, result: { state: 'loading' } })
+    computePartyProbe(selected).then((result) => {
+      if (!cancelled) setProbe({ id: selected, result })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [selected, settings.refreshMinutes])
+
+  const current = probe && probe.result.state === 'ready' ? probe.result.data : undefined
+  const councils = useMemo(() => (current ? (onlyLeads ? current.councils.filter((c) => c.leads) : current.councils) : []), [current, onlyLeads])
 
   return (
-    <div className="wrap max-w-[1040px] pt-5 md:pt-8">
-      <nav aria-label="Breadcrumb">
-        <Link to="/results" className="inline-flex min-h-11 items-center gap-1.5 text-sm font-bold text-navy hover:underline">
-          <ArrowLeft size={16} strokeWidth={2.5} aria-hidden="true" /> IEC results
-        </Link>
-      </nav>
-      <header className="relative mt-1 border-t border-line pt-4 before:absolute before:-top-px before:left-0 before:h-1.5 before:w-24 before:bg-brand before:content-['']">
-        <p className="text-sm font-black uppercase tracking-[0.08em] text-brand">{IEC_EVENT.name}</p>
-        <h1 className="mt-1 text-4xl font-black uppercase leading-none tracking-[-0.02em] md:text-5xl">Results by party</h1>
-        <p className="mt-3 max-w-[70ch] text-[16px] leading-relaxed text-body">
-          Any party that stood: its votes and seats nationally, in each province and on every council, as published by the IEC. District councils
-          are not included.
-        </p>
+    <div className="wrap max-w-[980px] pt-7 md:pt-10">
+      <header className="relative border-t border-line pt-4 before:absolute before:-top-px before:left-0 before:h-1.5 before:w-24 before:bg-brand before:content-['']">
+        <h1 className="text-4xl font-black uppercase leading-none tracking-[-0.02em] md:text-5xl">Results by party</h1>
+        <p className="mt-2 max-w-[70ch] text-[15px] text-muted">How one party did across the country: votes, seats, councils led and outright majorities won.</p>
       </header>
 
-      <div className="mt-6 max-w-xl">
+      <div className="mt-6">
         <label htmlFor="party-select" className="block text-[15px] font-extrabold">
-          Party
+          Choose a party
         </label>
         <select
           id="party-select"
-          value={partyId ?? ''}
-          onChange={(e) => setParams(e.target.value ? { party: e.target.value } : {}, { replace: true })}
-          className={`${field} mt-1.5 cursor-pointer`}
+          value={selected ?? ''}
+          onChange={(e) => setSelected(Number(e.target.value))}
+          className="mt-1 h-12 w-full max-w-md border border-ink/35 bg-paper px-3.5 text-base text-ink"
         >
-          <option value="">Choose a party</option>
-          {/* A party opened by link before the lists have loaded still needs an option to show. */}
-          {partyId !== null && !known && <option value={partyId}>{party?.state === 'ready' ? party.data.name : party?.state === 'error' ? 'Unknown party' : 'Loading…'}</option>}
-          {largest.length > 0 && (
-            <optgroup label="Largest parties">
-              {largest.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {directory && directory.length > 0 && (
-            <optgroup label={`All ${directory.length} parties, A to Z`}>
-              {directory.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
+          {parties.map((party) => (
+            <option key={party.id} value={party.id}>
+              {party.name}
+            </option>
+          ))}
         </select>
-        {directory && directory.length === 0 && <p className="mt-1.5 text-[13.5px] text-muted">The full list of parties could not be loaded, so only the largest are offered for now.</p>}
       </div>
 
-      {partyId === null && (
-        <section aria-labelledby="party-largest" className="mt-8">
-          <h2 id="party-largest" className="text-xl font-extrabold tracking-tight">
-            Largest parties
-          </h2>
-          {largest.length > 0 ? (
-            <ul className="mt-3 flex flex-wrap gap-2">
-              {largest.map((p) => (
-                <li key={p.id}>
-                  <Link to={`/results/party?party=${p.id}`} replace className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm font-bold hover:border-navy hover:text-navy">
-                    {p.name}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-2 text-[15px] text-muted" role="status">
-              {results.state === 'loading' ? 'Fetching results from the IEC…' : 'Choose a party from the list above.'}
-            </p>
-          )}
-        </section>
-      )}
+      {probe?.result.state === 'loading' && <p className="mt-6 text-[15px] text-muted">Adding up the councils…</p>}
+      {probe?.result.state === 'error' && <p className="mt-6 text-[15px] text-muted">The results could not be loaded just now. Try another party or check again shortly.</p>}
 
-      {partyId !== null && (
-        <section aria-labelledby="party-name" className="mt-8">
-          {party?.state === 'loading' && (
-            <p role="status" className="text-[16px] font-bold text-body">
-              Fetching this party’s results from the IEC…
-            </p>
-          )}
-          {party?.state === 'error' && (
-            <div className="max-w-xl">
-              <h2 id="party-name" className="text-2xl font-extrabold tracking-tight">
-                No results could be loaded for this party
-              </h2>
-              <p className="mt-2 text-[16px] leading-relaxed text-body">
-                It may not have stood in these elections, or the IEC’s results system did not answer. Choose another party, or try again shortly.
-              </p>
+      {current && (
+        <>
+          <dl className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {([
+              ['Total votes', formatNum(current.votes)],
+              ['National share', `${current.share.toFixed(2)}%`],
+              ['Council seats', formatNum(current.seats)],
+              ['Ward seats', formatNum(current.wardSeats)],
+              ['Councils led', formatNum(current.councilsLed)],
+              ['Outright majorities', formatNum(current.majorities)],
+            ] as [string, string][]).map(([label, value]) => (
+              <div key={label} className="border border-line bg-paper p-4">
+                <dt className="text-[12.5px] font-black uppercase tracking-[0.05em] text-muted">{label}</dt>
+                <dd className="mt-1 text-2xl font-black tabular-nums text-ink">{value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <section aria-labelledby="party-provinces" className="mt-10">
+            <h2 id="party-provinces" className="text-2xl font-extrabold tracking-tight">
+              By province
+            </h2>
+            <div className="mt-3 overflow-x-auto border border-line">
+              <table className="w-full min-w-[620px] border-collapse text-left text-[15px]">
+                <thead>
+                  <tr className="bg-wash text-[12.5px] uppercase tracking-[0.05em] text-muted">
+                    <th scope="col" className="px-4 py-3 font-extrabold">Province</th>
+                    <th scope="col" className="px-4 py-3 text-right font-extrabold">Votes</th>
+                    <th scope="col" className="px-4 py-3 text-right font-extrabold">Share</th>
+                    <th scope="col" className="px-4 py-3 text-right font-extrabold">Seats</th>
+                    <th scope="col" className="px-4 py-3 text-right font-extrabold">Led</th>
+                    <th scope="col" className="px-4 py-3 text-right font-extrabold">Majorities</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {current.provinces.map((row) => (
+                    <tr key={row.name} className="border-t border-line">
+                      <th scope="row" className="px-4 py-3 font-bold">{row.name}</th>
+                      <td className="px-4 py-3 text-right tabular-nums text-body">{formatNum(row.votes)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-body">{row.share.toFixed(1)}%</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-body">{formatNum(row.seats)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-body">{formatNum(row.councilsLed)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-body">{formatNum(row.majorities)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          )}
-          {party?.state === 'ready' && (
-            <>
-              <h2 id="party-name" className="text-[28px] font-extrabold leading-tight tracking-tight">
-                {party.data.name}
+          </section>
+
+          <section aria-labelledby="party-councils" className="mt-10">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <h2 id="party-councils" className="text-2xl font-extrabold tracking-tight">
+                Council by council
               </h2>
-              {party.origin === 'live' ? (
-                <p className="mt-1 text-[14.5px] text-muted">IEC figures as at {fullDate(party.data.reportedAt ?? party.at)}</p>
-              ) : (
-                <p className="mt-3 max-w-[78ch] border-l-4 border-warn bg-[#fdf1d4] px-4 py-3 text-[15px] font-bold leading-relaxed text-[#5c4000]">
-                  The IEC’s results system could not be reached just now. These figures are worked out from a copy of the IEC’s council results saved
-                  on {fullDate(party.at)}.
-                </p>
-              )}
-              <Detail
-                key={party.data.id}
-                party={party.data}
-                totalCouncils={totalCouncils}
-                summaries={results.state === 'ready' ? results.data.councils : NO_COUNCILS}
-                summariesState={results.state}
-              />
-            </>
-          )}
-        </section>
+              <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
+                <input type="checkbox" checked={onlyLeads} onChange={(e) => setOnlyLeads(e.target.checked)} className="size-4 accent-[#890303]" />
+                Only councils it leads
+              </label>
+            </div>
+            <div className="mt-3 overflow-x-auto border border-line">
+              <table className="w-full min-w-[620px] border-collapse text-left text-[15px]">
+                <thead>
+                  <tr className="bg-wash text-[12.5px] uppercase tracking-[0.05em] text-muted">
+                    <th scope="col" className="px-4 py-3 font-extrabold">Council</th>
+                    <th scope="col" className="px-4 py-3 font-extrabold">Province</th>
+                    <th scope="col" className="px-4 py-3 text-right font-extrabold">Votes</th>
+                    <th scope="col" className="px-4 py-3 text-right font-extrabold">Share</th>
+                    <th scope="col" className="px-4 py-3 text-right font-extrabold">Seats</th>
+                    <th scope="col" className="px-4 py-3 font-extrabold">Position</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {councils.slice(0, 60).map((row) => (
+                    <tr key={row.id} className="border-t border-line">
+                      <th scope="row" className="px-4 py-3 font-bold">{row.name}</th>
+                      <td className="px-4 py-3 text-body">{row.province}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-body">{formatNum(row.votes)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-body">{row.share.toFixed(1)}%</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-body">
+                        {formatNum(row.seats)}/{formatNum(row.councilSeats)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-block rounded-full px-2.5 py-1 text-[12.5px] font-bold ${row.leads ? 'bg-[#dff5e8] text-[#0b5a2e]' : 'bg-wash text-body'}`}>
+                          {row.leads ? 'In front' : 'Behind'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
       )}
     </div>
   )

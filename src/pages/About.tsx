@@ -1,26 +1,28 @@
-import { useControl } from '../lib/control'
-import { useTitle } from '../lib/extras'
-import { FEEDS, PUBLISHERS, SECTION_BY_ID } from '../lib/feed/sources'
-import { stamp } from '../lib/format'
 import { useNews } from '../lib/news/store'
-import type { FeedState } from '../lib/news/store'
-
-function describe(state: FeedState | undefined, checking: boolean): { label: string; tone: string } {
-  if (!state || (state.origin === 'none' && checking)) return { label: 'Checking…', tone: 'bg-line text-body' }
-  if (state.origin === 'live' || state.origin === 'relay') {
-    return state.error
-      ? { label: 'Live, last check failed', tone: 'bg-[#fdf1d4] text-[#6b4a00]' }
-      : { label: state.origin === 'relay' ? 'Live via relay' : 'Live', tone: 'bg-[#dff5e8] text-[#0b5a2e]' }
-  }
-  if (state.origin === 'cache') return { label: 'Earlier copy from this device', tone: 'bg-[#fdf1d4] text-[#6b4a00]' }
-  if (state.origin === 'snapshot') return { label: 'Saved copy', tone: 'bg-[#fdf1d4] text-[#6b4a00]' }
-  return { label: 'Unavailable', tone: 'bg-brand-tint text-brand' }
-}
+import { useControl } from '../lib/control'
+import { useTitle } from '../lib/weather'
+import { FEEDS, SOURCES, SECTION_BY_ID } from '../lib/feeds'
+import { formatAt } from '../lib/format'
+import { EmptyFeeds } from '../components/Chrome'
+import { RefreshCw } from 'lucide-react'
 
 export default function About() {
   useTitle('About & feed status')
   const { feeds, now, refreshing, ready, refresh, status } = useNews()
-  const { refreshMinutes } = useControl().settings
+  const { settings, sections } = useControl()
+
+  const badge = (feedId: string) => {
+    const state = feeds[feedId]
+    if (!state || (state.origin === 'none' && !ready)) return { label: 'Checking…', tone: 'bg-line text-body' }
+    if (state.origin === 'live' || state.origin === 'relay') {
+      return state.error
+        ? { label: 'Live, last check failed', tone: 'bg-[#fdf1d4] text-[#6b4a00]' }
+        : { label: state.origin === 'relay' ? 'Live via relay' : 'Live', tone: 'bg-[#dff5e8] text-[#0b5a2e]' }
+    }
+    if (state.origin === 'cache') return { label: 'Earlier copy from this device', tone: 'bg-[#fdf1d4] text-[#6b4a00]' }
+    if (state.origin === 'snapshot') return { label: 'Saved copy', tone: 'bg-[#fdf1d4] text-[#6b4a00]' }
+    return { label: 'Unavailable', tone: 'bg-brand-tint text-brand' }
+  }
 
   return (
     <div className="wrap max-w-[980px] pt-7 md:pt-10">
@@ -30,12 +32,12 @@ export default function About() {
 
       <div className="mt-6 max-w-[68ch] space-y-4 text-[17px] leading-relaxed text-body">
         <p>
-          180news gathers the latest headlines from South African and international newsrooms onto one front page, so you can see how the day is
-          being reported without opening a dozen sites.
+          180news gathers the latest headlines from South African and international newsrooms onto one front page, so you can see how the day is being reported without
+          opening a dozen sites.
         </p>
         <p>
-          We show each publisher’s headline, summary and picture as supplied in that publisher’s public RSS feed; long summaries are shortened.
-          The reporting is theirs: every story links straight to the full article on the publisher’s own website.
+          We show each publisher’s headline, summary and picture as supplied in that publisher’s public RSS feed; long summaries are shortened. The reporting is theirs:
+          every story links straight to the full article on the publisher’s own website.
         </p>
       </div>
 
@@ -45,13 +47,13 @@ export default function About() {
         </h2>
         <ul className="mt-3 max-w-[68ch] list-disc space-y-2 pl-5 text-[16px] leading-relaxed text-body">
           <li>
-            {refreshMinutes > 0
-              ? `Feeds are re-checked every ${refreshMinutes} minutes while 180news is open, and whenever you press the refresh control in the top bar.`
+            {settings.refreshMinutes > 0
+              ? `Feeds are re-checked every ${settings.refreshMinutes} minutes while 180news is open, and whenever you press the refresh control in the top bar.`
               : 'Feeds are checked when 180news opens and whenever you press the refresh control in the top bar.'}
           </li>
           <li>
-            Election results come from the IEC’s results system{refreshMinutes > 0 ? ' and are re-checked on the same schedule' : ' and are checked when you open them'}. If
-            the IEC cannot be reached, the last figures stay on screen and say so.
+            Election results come from the IEC’s results system{settings.refreshMinutes > 0 ? ' and are re-checked on the same schedule' : ' and are checked when you open them'}
+            . If the IEC cannot be reached, the last figures stay on screen and say so.
           </li>
           <li>When new headlines arrive while you are reading, a “new stories” button appears instead of the page moving under you.</li>
           <li>If a publisher’s feed cannot be reached, we keep showing the last copy we have and label it below — nothing is made up to fill a gap.</li>
@@ -79,47 +81,58 @@ export default function About() {
             type="button"
             onClick={refresh}
             disabled={refreshing}
-            className="inline-flex h-11 cursor-pointer items-center border-2 border-navy px-5 text-sm font-extrabold text-navy transition-colors hover:bg-navy hover:text-white disabled:cursor-progress disabled:opacity-60"
+            className="inline-flex h-11 cursor-pointer items-center gap-2 border-2 border-navy px-5 text-sm font-extrabold text-navy transition-colors hover:bg-navy hover:text-white disabled:cursor-progress disabled:opacity-60"
           >
+            <RefreshCw size={15} strokeWidth={2.5} className={refreshing ? 'animate-spin motion-reduce:animate-none' : ''} aria-hidden="true" />
             {refreshing ? 'Checking…' : 'Check feeds now'}
           </button>
         </div>
-
         <div className="mt-4 overflow-x-auto border border-line">
           <table className="w-full min-w-[620px] border-collapse text-left text-[15px]">
             <thead>
               <tr className="bg-wash text-[12.5px] uppercase tracking-[0.05em] text-muted">
-                <th scope="col" className="px-4 py-3 font-extrabold">Newsroom</th>
-                <th scope="col" className="px-4 py-3 font-extrabold">Section</th>
-                <th scope="col" className="px-4 py-3 font-extrabold">Status</th>
-                <th scope="col" className="px-4 py-3 text-right font-extrabold">Stories</th>
-                <th scope="col" className="px-4 py-3 font-extrabold">Fetched</th>
+                <th scope="col" className="px-4 py-3 font-extrabold">
+                  Newsroom
+                </th>
+                <th scope="col" className="px-4 py-3 font-extrabold">
+                  Section
+                </th>
+                <th scope="col" className="px-4 py-3 font-extrabold">
+                  Status
+                </th>
+                <th scope="col" className="px-4 py-3 text-right font-extrabold">
+                  Stories
+                </th>
+                <th scope="col" className="px-4 py-3 font-extrabold">
+                  Fetched
+                </th>
               </tr>
             </thead>
             <tbody>
-              {FEEDS.map((def) => {
-                const state = feeds[def.id]
-                const info = describe(state, refreshing || !ready)
-                const publisher = PUBLISHERS[def.sourceId]
+              {FEEDS.map((feed) => {
+                const state = feeds[feed.id]
+                const tone = badge(feed.id)
+                const source = SOURCES[feed.sourceId]
                 return (
-                  <tr key={def.id} className="border-t border-line">
+                  <tr key={feed.id} className="border-t border-line">
                     <th scope="row" className="px-4 py-3 font-bold">
-                      <a href={publisher.home} target="_blank" rel="noopener noreferrer" className="text-navy underline-offset-2 hover:underline">
-                        {publisher.name}
+                      <a href={source.home} target="_blank" rel="noopener noreferrer" className="text-navy underline-offset-2 hover:underline">
+                        {source.name}
                       </a>
                     </th>
-                    <td className="px-4 py-3 text-body">{SECTION_BY_ID[def.section].label}</td>
+                    <td className="px-4 py-3 text-body">{SECTION_BY_ID[feed.section]?.label}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-block rounded-full px-2.5 py-1 text-[12.5px] font-bold ${info.tone}`}>{info.label}</span>
+                      <span className={`inline-block rounded-full px-2.5 py-1 text-[12.5px] font-bold ${tone.tone}`}>{tone.label}</span>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-body">{state?.items.length ?? 0}</td>
-                    <td className="px-4 py-3 tabular-nums text-body">{state && state.fetchedAt > 0 ? stamp(state.fetchedAt, now) : '–'}</td>
+                    <td className="px-4 py-3 tabular-nums text-body">{state && state.fetchedAt > 0 ? formatAt(state.fetchedAt, now) : '–'}</td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
         </div>
+        {ready && allEmpty() && <EmptyFeeds />}
       </section>
 
       <section aria-labelledby="credits" className="mt-10">
@@ -141,7 +154,29 @@ export default function About() {
           </a>
           .
         </p>
+        <p className="mt-4 max-w-[68ch] text-[16px] leading-relaxed text-body">
+          For how we handle what we collect, read our{' '}
+          <a href="/policy" className="font-semibold text-navy underline">
+            Privacy Policy
+          </a>{' '}
+          and the{' '}
+          <a href="/terms" className="font-semibold text-navy underline">
+            Terms &amp; Conditions
+          </a>
+          .
+        </p>
+        <p className="mt-4 max-w-[68ch] text-[16px] leading-relaxed text-body">
+          The newsroom can be reached at{' '}
+          <a href={`mailto:${settings.email}`} className="font-semibold text-navy underline break-all">
+            {settings.email}
+          </a>{' '}
+          or on {settings.phone}. Sections currently switched on: {sections.map((s) => s.label).join(', ')}.
+        </p>
       </section>
     </div>
   )
+}
+
+function allEmpty(): boolean {
+  return false
 }

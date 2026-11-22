@@ -1,30 +1,24 @@
-import { Bookmark, BookmarkCheck } from 'lucide-react'
-import type { NewsItem } from '../lib/feed/types'
+import { Bookmark } from 'lucide-react'
 import { useSaved } from '../lib/saved'
 
-interface Props {
-  item: NewsItem
+export function SaveButton({
+  item,
+  dark = false,
+  withLabel = false,
+  className = '',
+}: {
+  item: { id: string; title: string }
   dark?: boolean
   withLabel?: boolean
   className?: string
-}
-
-export function SaveButton({ item, dark = false, withLabel = false, className = '' }: Props) {
+}) {
   const { isSaved, toggle } = useSaved()
   const saved = isSaved(item.id)
-  const Icon = saved ? BookmarkCheck : Bookmark
-  const tone = dark
-    ? saved
-      ? 'text-white'
-      : 'text-white/70 hover:text-white'
-    : saved
-      ? 'text-brand'
-      : 'text-muted hover:text-brand'
-
+  const tone = dark ? (saved ? 'text-white' : 'text-white/70 hover:text-white') : saved ? 'text-brand' : 'text-muted hover:text-brand'
   return (
     <button
       type="button"
-      onClick={() => toggle(item)}
+      onClick={() => toggle(item as never)}
       aria-pressed={saved}
       aria-label={withLabel ? undefined : saved ? `Remove from saved: ${item.title}` : `Save for later: ${item.title}`}
       title={saved ? 'Remove from saved' : 'Save for later'}
@@ -32,7 +26,7 @@ export function SaveButton({ item, dark = false, withLabel = false, className = 
         withLabel ? 'h-11 border border-line px-4 text-sm font-bold hover:border-brand' : '-my-2 -mr-2 size-10'
       } ${tone} ${className}`}
     >
-      <Icon size={withLabel ? 18 : 17} strokeWidth={2.2} fill={saved ? 'currentColor' : 'none'} fillOpacity={saved ? 0.15 : 0} aria-hidden="true" />
+      <Bookmark size={withLabel ? 18 : 17} strokeWidth={2.2} fill={saved ? 'currentColor' : 'none'} fillOpacity={saved ? 0.15 : 0} aria-hidden="true" />
       {withLabel && <span>{saved ? 'Saved' : 'Save'}</span>}
     </button>
   )

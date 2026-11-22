@@ -1,67 +1,82 @@
-const TZ = 'Africa/Johannesburg'
+/**
+ * Date and number formatting helpers. All wall-clock times are South African
+ * Standard Time (Africa/Johannesburg), the same zone the newsroom works in.
+ */
+export const SAST = 'Africa/Johannesburg'
 
-const dayFmt = new Intl.DateTimeFormat('en-ZA', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-const dayNoYearFmt = new Intl.DateTimeFormat('en-ZA', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' })
-const shortFmt = new Intl.DateTimeFormat('en-ZA', { timeZone: TZ, day: 'numeric', month: 'short' })
-const clockFmt = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-const longFmt = new Intl.DateTimeFormat('en-ZA', { timeZone: TZ, day: 'numeric', month: 'long', year: 'numeric' })
-const keyFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
+const longDate = new Intl.DateTimeFormat('en-ZA', {
+  timeZone: SAST,
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+})
+const mediumDate = new Intl.DateTimeFormat('en-ZA', {
+  timeZone: SAST,
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+})
+const shortDate = new Intl.DateTimeFormat('en-ZA', { timeZone: SAST, day: 'numeric', month: 'short' })
+const clock = new Intl.DateTimeFormat('en-GB', {
+  timeZone: SAST,
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+const fullDate = new Intl.DateTimeFormat('en-ZA', {
+  timeZone: SAST,
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+})
+const isoDay = new Intl.DateTimeFormat('en-CA', {
+  timeZone: SAST,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
 
-/** "Tuesday, 10 November 2026" in South African time. */
-export function todayLabel(now: number): string {
-  return dayFmt.format(now)
-}
+export const formatLongDate = (d: number): string => longDate.format(d)
+export const formatTime = (d: number): string => clock.format(d)
+export const formatShortDate = (d: number): string => shortDate.format(d)
+export const formatFull = (d: number): string => `${fullDate.format(d)} at ${clock.format(d)} SAST`
+export const dayKey = (d: number): string => isoDay.format(d)
 
-/** "14:02" in South African time. */
-export function clock(ms: number): string {
-  return clockFmt.format(ms)
-}
-
-export function shortDate(ms: number): string {
-  return shortFmt.format(ms)
-}
-
-/** "10 November 2026 at 14:02 SAST" */
-export function fullDate(ms: number): string {
-  return `${longFmt.format(ms)} at ${clockFmt.format(ms)} SAST`
-}
-
-export function dayKey(ms: number): string {
-  return keyFmt.format(ms)
-}
-
-export function timeAgo(ms: number | null, now: number): string {
-  if (ms === null) return ''
-  const diff = Math.max(0, now - ms)
-  const mins = Math.floor(diff / 60_000)
-  if (mins < 1) return 'Just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
+export function timeAgo(at: number | null, now: number): string {
+  if (at === null) return ''
+  const minutes = Math.floor(Math.max(0, now - at) / 60000)
+  if (minutes < 1) return 'Just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h ago`
-  if (dayKey(ms) === dayKey(now - 86_400_000)) return 'Yesterday'
-  return shortFmt.format(ms)
+  return dayKey(at) === dayKey(now - 86400000) ? 'Yesterday' : shortDate.format(at)
 }
 
-/** "Today", "Yesterday" or "Sunday, 8 November". */
-export function dayHeading(ms: number, now: number): string {
-  const key = dayKey(ms)
+export function dayLabel(at: number, now: number): string {
+  const key = dayKey(at)
   if (key === dayKey(now)) return 'Today'
-  if (key === dayKey(now - 86_400_000)) return 'Yesterday'
-  return dayNoYearFmt.format(ms)
+  if (key === dayKey(now - 86400000)) return 'Yesterday'
+  return mediumDate.format(at)
 }
 
-/** "in 5 minutes", "in 3 hours", "in 4 days". */
-export function timeUntil(ms: number, now: number): string {
-  const mins = Math.ceil((ms - now) / 60_000)
-  if (mins <= 1) return 'in under a minute'
-  if (mins < 60) return `in ${mins} minutes`
-  const hours = Math.round(mins / 60)
+export function inFuture(at: number, now: number): string {
+  const minutes = Math.ceil((at - now) / 60000)
+  if (minutes <= 1) return 'in under a minute'
+  if (minutes < 60) return `in ${minutes} minutes`
+  const hours = Math.round(minutes / 60)
   if (hours < 24) return `in ${hours} ${hours === 1 ? 'hour' : 'hours'}`
   const days = Math.round(hours / 24)
   return `in ${days} ${days === 1 ? 'day' : 'days'}`
 }
 
-/** Time for today, otherwise "10 Nov, 14:02". */
-export function stamp(ms: number, now: number): string {
-  return dayKey(ms) === dayKey(now) ? clock(ms) : `${shortDate(ms)}, ${clock(ms)}`
+export function formatAt(at: number, now: number): string {
+  return dayKey(at) === dayKey(now) ? formatTime(at) : `${formatShortDate(at)}, ${formatTime(at)}`
+}
+
+/** Thousands-separated integer with plain spaces (en-ZA style). */
+export function formatNum(n: number): string {
+  return Math.round(n)
+    .toLocaleString('en-ZA')
+    .replace(/[\u00a0\u202f,]/g, ' ')
 }

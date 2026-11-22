@@ -1,39 +1,47 @@
-import { Search as SearchIcon, X } from 'lucide-react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMemo, useRef } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { StoryRow } from '../components/StoryCard'
-import { useControl } from '../lib/control'
-import { useTitle } from '../lib/extras'
-import { publisherName } from '../lib/feed/sources'
+import { Search as SearchIcon, X } from 'lucide-react'
 import { useNews } from '../lib/news/store'
+import { useControl } from '../lib/control'
+import { useTitle } from '../lib/weather'
+import { sourceName } from '../lib/feeds'
+import { StoryRow } from '../components/StoryCard'
 
-const LIMIT = 60
+const MAX = 60
 
 export default function Search() {
   const [params, setParams] = useSearchParams()
-  const q = params.get('q') ?? ''
-  const query = q.trim()
-  useTitle(query ? `Search: ${query}` : 'Search')
+  const query = params.get('q') ?? ''
+  const trimmed = query.trim()
+  useTitle(trimmed ? `Search: ${trimmed}` : 'Search')
   const { all, ready } = useNews()
   const { sections } = useControl()
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const results = useMemo(() => {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
-    if (!terms.length) return []
+  const matches = useMemo(() => {
+    const words = trimmed.toLowerCase().split(/\s+/).filter(Boolean)
+    if (!words.length) return []
     return all.filter((item) => {
-      const haystack = `${item.title} ${item.summary} ${publisherName(item.sourceId)} ${item.author ?? ''} ${item.category ?? ''} ${(item.tags ?? []).join(' ')}`.toLowerCase()
-      return terms.every((t) => haystack.includes(t))
+      const haystack = `${item.title} ${item.summary} ${sourceName(item.sourceId)} ${item.author ?? ''} ${item.category ?? ''} ${(item.tags ?? []).join(' ')}`.toLowerCase()
+      return words.every((word) => haystack.includes(word))
     })
-  }, [all, query])
+  }, [all, trimmed])
 
-  const setQuery = (value: string) => setParams(value ? { q: value } : {}, { replace: true })
+  const update = (value: string) => setParams(value ? { q: value } : {}, { replace: true })
+  const navigate = useNavigate()
 
   return (
     <div className="wrap max-w-[860px] pt-7 md:pt-10">
       <h1 className="text-4xl font-black uppercase leading-none tracking-[-0.02em] md:text-5xl">Search</h1>
-
-      <form role="search" onSubmit={(e) => { e.preventDefault(); inputRef.current?.blur() }} className="relative mt-5">
+      <form
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault()
+          inputRef.current?.blur()
+          navigate(`/search?q=${encodeURIComponent(trimmed)}`)
+        }}
+        className="relative mt-5"
+      >
         <label htmlFor="page-search" className="sr-only">
           Search current headlines
         </label>
@@ -42,18 +50,21 @@ export default function Search() {
           ref={inputRef}
           id="page-search"
           type="search"
-          value={q}
-          onChange={(e) => setQuery(e.target.value)}
+          value={query}
+          onChange={(e) => update(e.target.value)}
           placeholder="Search current headlines"
           autoComplete="off"
           enterKeyHint="search"
-          autoFocus={!q}
+          autoFocus={!query}
           className="h-14 w-full border-2 border-ink bg-paper pl-12 pr-14 text-lg font-semibold placeholder:font-normal placeholder:text-muted [&::-webkit-search-cancel-button]:hidden"
         />
-        {q && (
+        {query && (
           <button
             type="button"
-            onClick={() => { setQuery(''); inputRef.current?.focus() }}
+            onClick={() => {
+              update('')
+              inputRef.current?.focus()
+            }}
             aria-label="Clear search"
             className="absolute right-1.5 top-1/2 grid size-11 -translate-y-1/2 cursor-pointer place-items-center rounded-full text-muted hover:bg-wash hover:text-ink"
           >
@@ -61,43 +72,37 @@ export default function Search() {
           </button>
         )}
       </form>
-
       <div aria-live="polite" className="mt-4 min-h-6 text-[15px] text-muted">
-        {query && ready && (
+        {trimmed && ready && (
           <p>
-            {results.length === 0
-              ? `No current headlines match “${query}”.`
-              : `${results.length} ${results.length === 1 ? 'headline matches' : 'headlines match'} “${query}”${results.length > LIMIT ? ` — showing the newest ${LIMIT}` : ''}`}
+            {matches.length === 0
+              ? `No current headlines match “${trimmed}”.`
+              : `${matches.length} ${matches.length === 1 ? 'headline matches' : 'headlines match'} “${trimmed}”${matches.length > MAX ? ` — showing the newest ${MAX}` : ''}`}
           </p>
         )}
-        {query && !ready && <p>Loading headlines…</p>}
+        {trimmed && !ready && <p>Loading headlines…</p>}
       </div>
-
-      {results.length > 0 && (
+      {matches.length > 0 && (
         <ol className="mt-2 divide-y divide-line border-t border-line">
-          {results.slice(0, LIMIT).map((item) => (
+          {matches.slice(0, MAX).map((item) => (
             <li key={item.id} className="py-4">
               <StoryRow item={item} summary />
             </li>
           ))}
         </ol>
       )}
-
-      {(!query || (ready && results.length === 0)) && (
+      {(!trimmed || (ready && matches.length === 0)) && (
         <div className="mt-6 border-t border-line pt-6">
           <p className="max-w-xl text-[16px] leading-relaxed text-body">
-            {query
+            {trimmed
               ? 'Search covers the headlines currently in the feeds, so older stories will not appear. Try a shorter phrase, a name or a place — or browse a section.'
               : 'Search the headlines currently on 180news by topic, name, place or newsroom — or browse a section.'}
           </p>
           <ul className="mt-4 flex flex-wrap gap-2">
-            {sections.map((s) => (
-              <li key={s.id}>
-                <Link
-                  to={`/section/${s.id}`}
-                  className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm font-bold hover:border-navy hover:text-navy"
-                >
-                  {s.label}
+            {sections.map((section) => (
+              <li key={section.id}>
+                <Link to={`/section/${section.id}`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm font-bold hover:border-navy hover:text-navy">
+                  {section.label}
                 </Link>
               </li>
             ))}

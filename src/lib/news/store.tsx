@@ -1,41 +1,42 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import { articleToItem, useControl } from '../control'
-import { isNewsItem } from '../feed/parse'
-import { FEEDS, SECTIONS, feedsForSection } from '../feed/sources'
-import type { NewsItem, SectionId } from '../feed/types'
-import { loadFeeds, loadSnapshot } from './load'
-
-export type Origin = 'live' | 'relay' | 'cache' | 'snapshot' | 'none'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { FEEDS, SECTIONS, feedsForSection, type FeedDef } from '../feeds'
+import { dedupeItems, interleave, isArticle, normalizeItem, byNewest, type Article } from './parse'
+import { useControl, ownToArticle } from '../control'
+import { loadCmsArticles } from '../cms'
 
 export interface FeedState {
-  items: NewsItem[]
-  origin: Origin
+  items: Article[]
+  origin: 'live' | 'relay' | 'cache' | 'snapshot' | 'none'
   fetchedAt: number
   error?: string
 }
 
-export type FeedMap = Record<string, FeedState>
-
 export interface NewsStatus {
-  kind: 'loading' | 'live' | 'saved' | 'offline'
+  kind: 'live' | 'loading' | 'saved' | 'offline'
   at: number | null
   live: number
   total: number
 }
 
-interface NewsContextValue {
+interface NewsValue {
   ready: boolean
   refreshing: boolean
   now: number
-  feeds: FeedMap
-  all: NewsItem[]
-  bySection: Record<SectionId, NewsItem[]>
-  byId: Map<string, NewsItem>
-  /** An article chosen in the control panel to lead the front page. */
-  featured?: NewsItem
-  /** Reader articles for the headline news, newest first. */
-  headlines: NewsItem[]
+  feeds: Record<string, FeedState>
+  bySection: Record<string, Article[]>
+  byId: Map<string, Article>
+  all: Article[]
+  featured: Article | undefined
+  headlines: Article[]
   status: NewsStatus
   pendingCount: number
   applyPending: () => void
@@ -43,263 +44,445 @@ interface NewsContextValue {
 }
 
 const CACHE_KEY = '180news:feeds:v1'
-const CACHE_FRESH_MS = 30 * 60_000
-const STALE_MS = 20 * 60_000
-const BOOT_TIMEOUT_MS = 3500
-const CATCH_UP_AGE_MS = 6 * 60_000
-export const FRONT_SECTIONS: SectionId[] = ['south-africa', 'politics', 'business']
+const CACHE_FRESH_MS = 30 * 60000
+const LIVE_RECENT_MS = 20 * 60000
+const FIRST_BOOT_DELAY_MS = 3500
+const STALE_REFRESH_MS = 6 * 60000
+const PRIORITY_SECTIONS = ['south-africa', 'politics', 'business']
+const FEED_ITEM_LIMIT = 24
+const CACHE_LIMIT = 16
 
-function readCache(): { feeds: FeedMap; savedAt: number } | null {
+function readCache(): { feeds: Record<string, FeedState>; savedAt: number } | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY)
     if (!raw) return null
-    const data = JSON.parse(raw) as { savedAt?: unknown; feeds?: Record<string, { items?: unknown; fetchedAt?: unknown }> }
-    if (typeof data.savedAt !== 'number' || !data.feeds || typeof data.feeds !== 'object') return null
-    const feeds: FeedMap = {}
-    for (const def of FEEDS) {
-      const entry = data.feeds[def.id]
-      if (!entry || !Array.isArray(entry.items) || typeof entry.fetchedAt !== 'number') continue
-      const items = entry.items.filter(isNewsItem)
-      if (items.length) feeds[def.id] = { items, origin: 'cache', fetchedAt: entry.fetchedAt }
+    const parsed = JSON.parse(raw) as { savedAt?: unknown; feeds?: unknown }
+    if (typeof parsed.savedAt !== 'number' || !parsed.feeds || typeof parsed.feeds !== 'object') return null
+    const feeds: Record<string, FeedState> = {}
+    for (const feed of FEEDS) {
+      const entry = (parsed.feeds as Record<string, unknown>)[feed.id]
+      if (!entry || typeof entry !== 'object') continue
+      const items = (entry as { items?: unknown }).items
+      const fetchedAt = (entry as { fetchedAt?: unknown }).fetchedAt
+      if (!Array.isArray(items) || typeof fetchedAt !== 'number') continue
+      const valid = items.filter(isArticle)
+      if (valid.length) feeds[feed.id] = { items: valid, origin: 'cache', fetchedAt }
     }
-    return Object.keys(feeds).length ? { feeds, savedAt: data.savedAt } : null
+    return Object.keys(feeds).length ? { feeds, savedAt: parsed.savedAt } : null
   } catch {
     return null
   }
 }
 
-function writeCache(feeds: FeedMap): void {
+function writeCache(feeds: Record<string, FeedState>): void {
   try {
-    const slim: Record<string, { items: NewsItem[]; fetchedAt: number }> = {}
+    const out: Record<string, { items: Article[]; fetchedAt: number }> = {}
     for (const [id, state] of Object.entries(feeds)) {
-      // Only persist what really came off the wire, never the bundled snapshot.
       if ((state.origin === 'live' || state.origin === 'relay' || state.origin === 'cache') && state.items.length) {
-        slim[id] = { items: state.items.slice(0, 16), fetchedAt: state.fetchedAt }
+        out[id] = { items: state.items.slice(0, CACHE_LIMIT), fetchedAt: state.fetchedAt }
       }
     }
-    if (Object.keys(slim).length) localStorage.setItem(CACHE_KEY, JSON.stringify({ savedAt: Date.now(), feeds: slim }))
+    if (Object.keys(out).length) localStorage.setItem(CACHE_KEY, JSON.stringify({ savedAt: Date.now(), feeds: out }))
   } catch {
-    /* storage full or blocked – the cache is only an optimisation */
+    /* storage unavailable — the app keeps working from memory */
   }
 }
 
-function titleKey(item: NewsItem): string {
-  return item.title.toLowerCase().replace(/[^a-z0-9]+/g, '')
+interface SnapshotResponse {
+  generatedAt: number
+  feeds: Record<string, Article[]>
 }
 
-function byNewest(a: NewsItem, b: NewsItem): number {
-  return (b.published ?? 0) - (a.published ?? 0)
+let snapshotPromise: Promise<SnapshotResponse | null> | null = null
+function loadSnapshot(): Promise<SnapshotResponse | null> {
+  snapshotPromise ??= fetch('/snapshot.json')
+    .then((res) => (res.ok ? res.json() : Promise.reject(new Error('HTTP'))))
+    .then((data: SnapshotResponse) =>
+      !data || typeof data.generatedAt !== 'number' || !data.feeds || typeof data.feeds !== 'object' ? null : data,
+    )
+    .catch(() => {
+      snapshotPromise = null
+      return null
+    })
+  return snapshotPromise
 }
 
-const NewsContext = createContext<NewsContextValue | null>(null)
+class HttpError extends Error {
+  status: number
+  constructor(status: number) {
+    super(`HTTP ${status}`)
+    this.status = status
+  }
+}
+
+function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms)
+  const controller = new AbortController()
+  setTimeout(() => controller.abort(), ms)
+  return controller.signal
+}
+
+async function fetchJson(url: string, ms: number): Promise<unknown> {
+  const res = await fetch(url, { signal: timeoutSignal(ms), headers: { Accept: 'application/json' } })
+  if (!res.ok) throw new HttpError(res.status)
+  if (!(res.headers.get('content-type') ?? '').includes('json')) throw new Error('Unexpected response')
+  return res.json()
+}
+
+function errorText(err: unknown): string {
+  if (err instanceof Error) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') return 'Timed out'
+    if (err.name === 'TypeError') return 'Network error'
+    return err.message.slice(0, 100)
+  }
+  return 'Request failed'
+}
+
+let relayCooldownUntil = 0
+let inFlight = 0
+const waiting: (() => void)[] = []
+async function withSlot<T>(task: () => Promise<T>): Promise<T> {
+  if (inFlight >= 3) await new Promise<void>((resolve) => waiting.push(resolve))
+  inFlight += 1
+  try {
+    return await task()
+  } finally {
+    inFlight -= 1
+    waiting.shift()?.()
+  }
+}
+
+interface RelayResponse {
+  status?: string
+  items?: {
+    title?: string
+    link?: string
+    description?: string
+    content?: string
+    thumbnail?: string
+    author?: string
+    pubDate?: string
+    enclosure?: { link?: string; type?: string }
+    categories?: unknown
+  }[]
+}
+
+async function fetchViaRelay(feed: FeedDef): Promise<Article[]> {
+  if (Date.now() < relayCooldownUntil) throw new Error('Relay is rate-limited')
+  let data: RelayResponse
+  try {
+    data = (await fetchJson(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.url)}`, 12000)) as RelayResponse
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 429) relayCooldownUntil = Date.now() + 10 * 60000
+    throw err
+  }
+  if (!data || data.status !== 'ok' || !Array.isArray(data.items)) throw new Error('Relay could not read feed')
+  const items: Article[] = []
+  for (const raw of data.items) {
+    const enclosure =
+      raw.enclosure?.link && (!raw.enclosure.type || raw.enclosure.type.startsWith('image/')) ? raw.enclosure.link : undefined
+    const published = raw.pubDate ? Date.parse(`${raw.pubDate.trim().replace(' ', 'T')}Z`) : NaN
+    const article = normalizeItem(
+      {
+        title: raw.title ?? '',
+        link: raw.link ?? '',
+        descriptionHtml: raw.description ?? '',
+        contentHtml: raw.content ?? '',
+        image: raw.thumbnail ?? enclosure,
+        author: raw.author,
+        categories: Array.isArray(raw.categories) ? raw.categories.filter((c): c is string => typeof c === 'string') : [],
+        published: Number.isNaN(published) ? null : published,
+      },
+      feed,
+    )
+    if (article) items.push(article)
+  }
+  const fresh = dedupeItems(items, FEED_ITEM_LIMIT)
+  if (!fresh.length) throw new Error('Feed returned no stories')
+  return fresh
+}
+
+interface BatchResponse {
+  feeds?: Record<string, { ok?: boolean; items?: unknown; fetchedAt?: number } | undefined>
+}
+
+async function fetchViaBatch(feeds: FeedDef[]): Promise<Record<string, { items: Article[]; fetchedAt: number }>> {
+  const ids = feeds.map((f) => f.id).join(',')
+  const data = (await fetchJson(`/api/feed?ids=${encodeURIComponent(ids)}`, 14000)) as BatchResponse
+  if (!data || typeof data.feeds !== 'object' || data.feeds === null) throw new Error('Unexpected response')
+  const now = Date.now()
+  const out: Record<string, { items: Article[]; fetchedAt: number }> = {}
+  for (const feed of feeds) {
+    const entry = data.feeds[feed.id]
+    if (entry?.ok && Array.isArray(entry.items)) {
+      const items = entry.items.filter(isArticle)
+      const fetchedAt = typeof entry.fetchedAt === 'number' && entry.fetchedAt > 0 ? Math.min(entry.fetchedAt, now) : now
+      if (items.length) out[feed.id] = { items, fetchedAt }
+    }
+  }
+  return out
+}
+
+type FeedResult = { ok: true; items: Article[]; origin: 'live' | 'relay'; fetchedAt: number } | { ok: false; error: string }
+
+async function loadSection(feeds: FeedDef[]): Promise<Record<string, FeedResult>> {
+  const results: Record<string, FeedResult> = {}
+  if (Date.now() > relayCooldownUntil) {
+    try {
+      const batch = await fetchViaBatch(feeds)
+      for (const [id, state] of Object.entries(batch)) results[id] = { ok: true, items: state.items, origin: 'live', fetchedAt: state.fetchedAt }
+    } catch {
+      relayCooldownUntil = Date.now() + 10 * 60000
+    }
+  }
+  await Promise.all(
+    feeds
+      .filter((f) => !results[f.id])
+      .map((feed) =>
+        withSlot(async () => {
+          try {
+            results[feed.id] = { ok: true, items: await fetchViaRelay(feed), origin: 'relay', fetchedAt: Date.now() }
+          } catch (err) {
+            results[feed.id] = { ok: false, error: errorText(err) }
+          }
+        }),
+      ),
+  )
+  return results
+}
+
+const titleKey = (a: Article): string => a.title.toLowerCase().replace(/[^a-z0-9]+/g, '')
+
+const NewsContext = createContext<NewsValue | null>(null)
 
 export function NewsProvider({ children }: { children: ReactNode }) {
-  const { settings, shownArticles: articles, liveAt, readers } = useControl()
+  const { settings, articles, liveAt } = useControl()
   const { hiddenSections, hiddenSources } = settings
-  const refreshMs = settings.refreshMinutes * 60_000
-  const [boot] = useState(readCache)
-  const [feeds, setFeeds] = useState<FeedMap>(() => boot?.feeds ?? {})
-  const [ready, setReady] = useState(() => !!boot && Date.now() - boot.savedAt < CACHE_FRESH_MS)
+  const intervalMs = settings.refreshMinutes * 60000
+  const [cache] = useState(readCache)
+  const [feeds, setFeeds] = useState<Record<string, FeedState>>(() => cache?.feeds ?? {})
+  const [booted, setBooted] = useState(() => !!cache && Date.now() - cache.savedAt < CACHE_FRESH_MS)
   const [refreshing, setRefreshing] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
   const [now, setNow] = useState(() => Date.now())
+  const [cmsArticles, setCmsArticles] = useState<Article[]>([])
+  const cmsRef = useRef<Article[]>([])
 
-  const feedsRef = useRef<FeedMap>(boot?.feeds ?? {})
-  const pendingRef = useRef<FeedMap | null>(null)
-  const inFlight = useRef<Promise<void> | null>(null)
-  const directRef = useRef(false)
-  const lastRun = useRef(0)
-  const caughtUp = useRef(false)
-  const runRef = useRef<((mode: 'initial' | 'manual' | 'auto') => Promise<void>) | null>(null)
+  // Stories published in the newsroom CMS appear alongside the newsroom feeds.
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      loadCmsArticles().then((articles) => {
+        if (!cancelled && articles.length !== cmsRef.current.length) {
+          cmsRef.current = articles
+          setCmsArticles(articles)
+        } else if (!cancelled && articles.length === cmsRef.current.length && articles.length > 0) {
+          const changed = articles.some((a, i) => a.id !== cmsRef.current[i]?.id || a.title !== cmsRef.current[i]?.title)
+          if (changed) {
+            cmsRef.current = articles
+            setCmsArticles(articles)
+          }
+        }
+      })
+    }
+    load()
+    const timer = window.setInterval(() => {
+      if (!document.hidden) load()
+    }, 60000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [])
+  const feedsRef = useRef<Record<string, FeedState>>(cache?.feeds ?? {})
+  const pendingRef = useRef<Record<string, FeedState> | null>(null)
+  const runRef = useRef<Promise<void> | null>(null)
+  const manualRef = useRef(false)
+  const lastRunAt = useRef(0)
+  const staleFlag = useRef(false)
+  const runFn = useRef<((mode: 'initial' | 'auto' | 'manual') => Promise<void>) | null>(null)
 
-  const commit = useCallback((patch: FeedMap) => {
+  const mergeFeeds = useCallback((patch: Record<string, FeedState>) => {
     if (!Object.keys(patch).length) return
     feedsRef.current = { ...feedsRef.current, ...patch }
     setFeeds(feedsRef.current)
   }, [])
 
-  /** Anything still empty gets the saved copy that ships with the app. */
-  const fillGaps = useCallback(async () => {
-    const missing = FEEDS.filter((f) => !feedsRef.current[f.id]?.items.length)
-    if (!missing.length) return
+  const fillFromSnapshot = useCallback(async (): Promise<void> => {
+    const need = FEEDS.filter((f) => !feedsRef.current[f.id]?.items.length)
+    if (!need.length) return
     const snap = await loadSnapshot()
     if (!snap) return
-    const patch: FeedMap = {}
-    for (const def of missing) {
-      const current = feedsRef.current[def.id]
+    const patch: Record<string, FeedState> = {}
+    for (const feed of need) {
+      const current = feedsRef.current[feed.id]
       if (current?.items.length) continue
-      const saved = snap.feeds[def.id]
-      const items = Array.isArray(saved) ? saved.filter(isNewsItem) : []
-      if (items.length) patch[def.id] = { items, origin: 'snapshot', fetchedAt: snap.generatedAt, error: current?.error }
+      const items = (snap.feeds[feed.id] ?? []).filter(isArticle)
+      if (items.length) patch[feed.id] = { items, origin: 'snapshot', fetchedAt: snap.generatedAt, error: current?.error }
     }
-    commit(patch)
-  }, [commit])
+    mergeFeeds(patch)
+  }, [mergeFeeds])
 
   const run = useCallback(
-    (mode: 'initial' | 'manual' | 'auto'): Promise<void> => {
-      if (mode !== 'auto') directRef.current = true
-      if (inFlight.current) return inFlight.current
-
-      const job = (async () => {
+    async (mode: 'initial' | 'auto' | 'manual'): Promise<void> => {
+      if (mode !== 'auto') manualRef.current = true
+      if (runRef.current) return runRef.current
+      const task = (async () => {
         setRefreshing(true)
-        lastRun.current = Date.now()
-        const staged: FeedMap = {}
-        const settled = new Set<SectionId>()
-        let newestFetch = 0
-
+        lastRunAt.current = Date.now()
+        const deferred: Record<string, FeedState> = {}
+        const doneSections = new Set<string>()
+        let newestAt = 0
         await Promise.all(
           SECTIONS.map(async (section) => {
-            const defs = feedsForSection(section.id)
-            const results = await loadFeeds(defs)
-            const patch: FeedMap = {}
-            for (const def of defs) {
-              const result = results[def.id]
-              const previous = feedsRef.current[def.id]
+            const sectionFeeds = feedsForSection(section.id)
+            const results = await loadSection(sectionFeeds)
+            const sectionPatch: Record<string, FeedState> = {}
+            for (const feed of sectionFeeds) {
+              const result = results[feed.id]
+              const previous = feedsRef.current[feed.id]
               if (result?.ok) {
-                patch[def.id] = { items: result.items, origin: result.origin, fetchedAt: result.fetchedAt }
-                newestFetch = Math.max(newestFetch, result.fetchedAt)
+                sectionPatch[feed.id] = { items: result.items, origin: result.origin, fetchedAt: result.fetchedAt }
+                newestAt = Math.max(newestAt, result.fetchedAt)
               } else {
-                const error = result?.error ?? 'Request failed'
-                patch[def.id] = previous ? { ...previous, error } : { items: [], origin: 'none', fetchedAt: 0, error }
+                const error = result && !result.ok ? result.error : 'Request failed'
+                sectionPatch[feed.id] = previous
+                  ? { ...previous, error }
+                  : { items: [], origin: 'none', fetchedAt: 0, error }
               }
             }
-            if (directRef.current) commit(patch)
-            else Object.assign(staged, patch)
-
-            // The front page is built from these three; show it as soon as they are in.
-            settled.add(section.id)
-            if (mode === 'initial' && FRONT_SECTIONS.every((id) => settled.has(id))) setReady(true)
+            if (manualRef.current) mergeFeeds(sectionPatch)
+            else Object.assign(deferred, sectionPatch)
+            doneSections.add(section.id)
+            if (mode === 'initial' && PRIORITY_SECTIONS.every((s) => doneSections.has(s))) setBooted(true)
           }),
         )
-
-        if (Object.keys(staged).length) {
-          if (directRef.current) {
-            commit(staged)
+        if (Object.keys(deferred).length) {
+          if (manualRef.current) {
+            mergeFeeds(deferred)
           } else {
-            const shown = new Set<string>()
-            for (const state of Object.values(feedsRef.current)) for (const item of state.items) shown.add(item.id)
-            const fresh = new Set<string>()
-            for (const state of Object.values(staged)) for (const item of state.items) if (!shown.has(item.id)) fresh.add(item.id)
-            if (fresh.size > 0) {
-              // Don't reshuffle the page under a reader – offer the new stories instead.
-              pendingRef.current = staged
-              setPendingCount(fresh.size)
-            } else {
-              commit(staged)
-            }
+            const seen = new Set<string>()
+            for (const state of Object.values(feedsRef.current)) for (const item of state.items) seen.add(item.id)
+            const freshIds = new Set<string>()
+            for (const state of Object.values(deferred)) for (const item of state.items) if (!seen.has(item.id)) freshIds.add(item.id)
+            if (freshIds.size > 0) {
+              pendingRef.current = deferred
+              setPendingCount(freshIds.size)
+            } else mergeFeeds(deferred)
           }
         }
-
-        await fillGaps()
+        await fillFromSnapshot()
         writeCache(pendingRef.current ? { ...feedsRef.current, ...pendingRef.current } : feedsRef.current)
-
-        // A CDN may answer with an older copy while it fetches a new one in the
-        // background. If that is all we got, look again shortly – but only once.
-        const servedOld = newestFetch > 0 && Date.now() - newestFetch > CATCH_UP_AGE_MS
-        if (servedOld && !caughtUp.current) {
-          caughtUp.current = true
-          window.setTimeout(() => void runRef.current?.('auto'), 8000)
-        } else if (!servedOld) {
-          caughtUp.current = false
-        }
+        const stale = newestAt > 0 && Date.now() - newestAt > STALE_REFRESH_MS
+        if (stale && !staleFlag.current) {
+          staleFlag.current = true
+          window.setTimeout(() => void runFn.current?.('auto'), 8000)
+        } else if (!stale) staleFlag.current = false
       })()
-
-      inFlight.current = job
-      return job.finally(() => {
-        inFlight.current = null
-        directRef.current = false
-        setReady(true)
+      runRef.current = task
+      try {
+        await task
+      } finally {
+        runRef.current = null
+        manualRef.current = false
+        setBooted(true)
         setRefreshing(false)
         setNow(Date.now())
-      })
+      }
     },
-    [commit, fillGaps],
+    [mergeFeeds, fillFromSnapshot],
   )
 
   useEffect(() => {
-    runRef.current = run
+    runFn.current = run
   }, [run])
 
-  // First load, plus a deadline so a slow network never leaves the page blank.
   useEffect(() => {
     void run('initial')
-    const deadline = window.setTimeout(() => {
-      void fillGaps().then(() => setReady(true))
-    }, BOOT_TIMEOUT_MS)
-    return () => window.clearTimeout(deadline)
-  }, [run, fillGaps])
+    const timer = window.setTimeout(() => {
+      void fillFromSnapshot().then(() => setBooted(true))
+    }, FIRST_BOOT_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [run, fillFromSnapshot])
 
-  // Keep it live: poll while the tab is visible, catch up when it becomes visible again.
   useEffect(() => {
-    const poll = window.setInterval(() => {
-      if (refreshMs > 0 && !document.hidden) void run('auto')
-    }, refreshMs || 60_000)
-    const clockTick = window.setInterval(() => setNow(Date.now()), 30_000)
-    const catchUp = () => {
-      if (refreshMs > 0 && !document.hidden && Date.now() - lastRun.current > refreshMs) void run('auto')
+    const interval = window.setInterval(() => {
+      if (intervalMs > 0 && !document.hidden) void run('auto')
+    }, intervalMs || 60000)
+    const tick = window.setInterval(() => setNow(Date.now()), 30000)
+    const wake = () => {
+      if (intervalMs > 0 && !document.hidden && Date.now() - lastRunAt.current > intervalMs) void run('auto')
     }
-    document.addEventListener('visibilitychange', catchUp)
-    window.addEventListener('online', catchUp)
+    document.addEventListener('visibilitychange', wake)
+    window.addEventListener('online', wake)
     return () => {
-      window.clearInterval(poll)
-      window.clearInterval(clockTick)
-      document.removeEventListener('visibilitychange', catchUp)
-      window.removeEventListener('online', catchUp)
+      window.clearInterval(interval)
+      window.clearInterval(tick)
+      document.removeEventListener('visibilitychange', wake)
+      window.removeEventListener('online', wake)
     }
-  }, [run, refreshMs])
+  }, [run, intervalMs])
 
   const applyPending = useCallback(() => {
-    if (pendingRef.current) commit(pendingRef.current)
+    if (pendingRef.current) mergeFeeds(pendingRef.current)
     pendingRef.current = null
     setPendingCount(0)
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' })
-  }, [commit])
+  }, [mergeFeeds])
 
   const refresh = useCallback(() => {
-    if (pendingRef.current) commit(pendingRef.current)
-    pendingRef.current = null
-    setPendingCount(0)
+    if (pendingRef.current) {
+      mergeFeeds(pendingRef.current)
+      pendingRef.current = null
+      setPendingCount(0)
+    }
     void run('manual')
-  }, [commit, run])
+  }, [mergeFeeds, run])
 
-  const derived = useMemo(() => {
-    const bySection = {} as Record<SectionId, NewsItem[]>
-    const byId = new Map<string, NewsItem>()
+  const visible = useMemo(() => {
+    const bySection: Record<string, Article[]> = {}
+    const byId = new Map<string, Article>()
     const seenTitles = new Set<string>()
-    const all: NewsItem[] = []
-
-    let featured: NewsItem | undefined
-    const headlines: NewsItem[] = []
+    const all: Article[] = []
+    let featured: Article | undefined
+    const headlines: Article[] = []
     for (const section of SECTIONS) {
-      const ids = new Set<string>()
-      const titles = new Set<string>()
-      const list: NewsItem[] = []
+      const list: Article[] = []
+      const sectionTitles = new Set<string>()
+      const sectionIds = new Set<string>()
       if (hiddenSections.includes(section.id)) {
         bySection[section.id] = list
         continue
       }
-      // Articles written in the app come first so a feed story never displaces them.
-      for (const article of articles) {
-        if (article.section !== section.id || article.hidden || (article.publishAt ?? 0) > liveAt) continue
-        const item = articleToItem(article)
-        ids.add(item.id)
-        titles.add(titleKey(item))
-        seenTitles.add(titleKey(item))
+      for (const own of articles) {
+        if (own.section !== section.id || own.hidden || (own.publishAt ?? 0) > liveAt) continue
+        const item = ownToArticle(own)
         list.push(item)
+        sectionIds.add(item.id)
         byId.set(item.id, item)
         all.push(item)
-        if (article.pinned) featured = item
-        else if (article.headline) headlines.push(item)
+        if (own.pinned) featured = item
+        if (own.headline) headlines.push(item)
       }
-      for (const def of feedsForSection(section.id)) {
-        if (hiddenSources.includes(def.sourceId)) continue
-        for (const item of feeds[def.id]?.items ?? []) {
+      for (const cmsItem of cmsArticles) {
+        if (cmsItem.section !== section.id) continue
+        const key = titleKey(cmsItem)
+        if (sectionIds.has(cmsItem.id) || sectionTitles.has(key)) continue
+        list.push(cmsItem)
+        sectionIds.add(cmsItem.id)
+        sectionTitles.add(key)
+        byId.set(cmsItem.id, cmsItem)
+        all.push(cmsItem)
+        if (cmsItem.headline) headlines.push(cmsItem)
+      }
+      for (const feed of feedsForSection(section.id)) {
+        if (hiddenSources.includes(feed.sourceId)) continue
+        for (const item of feeds[feed.id]?.items ?? []) {
           const key = titleKey(item)
-          if (ids.has(item.id) || titles.has(key)) continue
-          ids.add(item.id)
-          titles.add(key)
+          if (sectionIds.has(item.id) || sectionTitles.has(key)) continue
           list.push(item)
+          sectionTitles.add(key)
           if (!byId.has(item.id) && !seenTitles.has(key)) {
             byId.set(item.id, item)
             seenTitles.add(key)
@@ -312,66 +495,51 @@ export function NewsProvider({ children }: { children: ReactNode }) {
     all.sort(byNewest)
     headlines.sort(byNewest)
     return { bySection, byId, all, featured, headlines }
-  }, [feeds, articles, liveAt, hiddenSections, hiddenSources])
+  }, [feeds, articles, cmsArticles, liveAt, hiddenSections, hiddenSources])
 
   const status = useMemo<NewsStatus>(() => {
     let live = 0
-    let liveAt = 0
-    let savedAt = 0
-    for (const def of FEEDS) {
-      const state = feeds[def.id]
-      if (!state?.items.length) continue
-      if (state.origin === 'live' || state.origin === 'relay') {
-        live += 1
-        liveAt = Math.max(liveAt, state.fetchedAt)
+    let newestLive = 0
+    let newest = 0
+    for (const feed of FEEDS) {
+      const state = feeds[feed.id]
+      if (state?.items.length) {
+        if (state.origin === 'live' || state.origin === 'relay') {
+          live += 1
+          newestLive = Math.max(newestLive, state.fetchedAt)
+        }
+        newest = Math.max(newest, state.fetchedAt)
       }
-      savedAt = Math.max(savedAt, state.fetchedAt)
     }
     const total = FEEDS.length
-    if (live > 0 && now - liveAt < STALE_MS) return { kind: 'live', at: liveAt, live, total }
-    if (!ready || refreshing) return { kind: 'loading', at: null, live, total }
-    if (savedAt > 0) return { kind: 'saved', at: savedAt, live: 0, total }
+    if (live > 0 && now - newestLive < LIVE_RECENT_MS) return { kind: 'live', at: newestLive, live, total }
+    if (!booted || refreshing) return { kind: 'loading', at: null, live, total }
+    if (newest > 0) return { kind: 'saved', at: newest, live: 0, total }
     return { kind: 'offline', at: null, live: 0, total }
-  }, [feeds, ready, refreshing, now])
+  }, [feeds, booted, refreshing, now])
 
-  const value = useMemo<NewsContextValue>(
-    // Pages wait for the site's own articles as well as the feeds, so the lead story does not change under the reader.
-    () => ({ ready: ready && readers.state !== 'loading', refreshing, now, feeds, ...derived, status, pendingCount, applyPending, refresh }),
-    [ready, readers.state, refreshing, now, feeds, derived, status, pendingCount, applyPending, refresh],
+  const value = useMemo<NewsValue>(
+    () => ({
+      ready: booted,
+      refreshing,
+      now,
+      feeds,
+      ...visible,
+      status,
+      pendingCount,
+      applyPending,
+      refresh,
+    }),
+    [booted, refreshing, now, feeds, visible, status, pendingCount, applyPending, refresh],
   )
 
   return <NewsContext.Provider value={value}>{children}</NewsContext.Provider>
 }
 
-export function useNews(): NewsContextValue {
+export function useNews(): NewsValue {
   const ctx = useContext(NewsContext)
   if (!ctx) throw new Error('useNews must be used inside <NewsProvider>')
   return ctx
 }
 
-/**
- * Order stories so neighbouring slots come from different newsrooms, while
- * still leading with what is newest. Older material follows chronologically.
- */
-export function diversify(items: NewsItem[], freshWindowMs = 18 * 60 * 60 * 1000): NewsItem[] {
-  if (items.length < 3) return [...items].sort(byNewest)
-  const sorted = [...items].sort(byNewest)
-  const newest = sorted[0].published ?? 0
-  const fresh = sorted.filter((i) => (i.published ?? 0) >= newest - freshWindowMs)
-  const older = sorted.filter((i) => (i.published ?? 0) < newest - freshWindowMs)
-
-  const queues = new Map<string, NewsItem[]>()
-  for (const item of fresh) {
-    const queue = queues.get(item.sourceId)
-    if (queue) queue.push(item)
-    else queues.set(item.sourceId, [item])
-  }
-  const out: NewsItem[] = []
-  let active = [...queues.values()]
-  while (active.length) {
-    active.sort((a, b) => byNewest(a[0], b[0]))
-    for (const queue of active) out.push(queue.shift() as NewsItem)
-    active = active.filter((q) => q.length)
-  }
-  return [...out, ...older]
-}
+export { interleave }

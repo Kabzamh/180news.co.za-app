@@ -1,56 +1,51 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Route, Routes, useLocation, useNavigationType } from 'react-router-dom'
-import { AdminGate } from './components/AdminGate'
-import { BottomTabs, Footer, NewStoriesPill } from './components/Chrome'
-import { Header } from './components/Header'
 import { AuthProvider } from './lib/auth'
 import { ControlProvider } from './lib/control'
 import { NewsProvider } from './lib/news/store'
 import { SavedProvider } from './lib/saved'
-import About from './pages/About'
-import Admin from './pages/Admin'
-import { AdminAds, AdminScheduled, AdminTags, AdminTeam } from './pages/AdminTools'
-import Control from './pages/Control'
+import { SiteHeader } from './components/Header'
+import { BottomNav, SiteFooter } from './components/Chrome'
+import { NewStoriesButton } from './components/Ticker'
 import Home from './pages/Home'
 import Latest from './pages/Latest'
-import NotFound from './pages/NotFound'
-import PartyResults from './pages/PartyResults'
-import Results from './pages/Results'
-import Saved from './pages/Saved'
-import Search from './pages/Search'
-import SeatCalculator from './pages/SeatCalculator'
 import Section from './pages/Section'
 import Story from './pages/Story'
+import Search from './pages/Search'
+import Saved from './pages/Saved'
+import About from './pages/About'
 import Submit from './pages/Submit'
+import Admin, { AdminAds, AdminScheduled, AdminTags, AdminTeam, Control } from './pages/Admin'
 import Tag from './pages/Tag'
+import Results from './pages/Results'
+import PartyResults from './pages/PartyResults'
+import SeatCalculator from './pages/SeatCalculator'
+import NotFound from './pages/NotFound'
+import Policy from './pages/Policy'
+import Terms from './pages/Terms'
 
-/** New pages start at the top (or at the part linked to); Back/Forward keep the browser's restored position. */
 function ScrollManager() {
   const { pathname, hash } = useLocation()
-  const type = useNavigationType()
+  const action = useNavigationType()
   useEffect(() => {
-    if (type === 'POP') return
-    // A link to a part of a page (such as /control#ctl-articles) goes to that part.
-    const target = hash ? document.getElementById(hash.slice(1)) : null
-    if (target) target.scrollIntoView()
-    else window.scrollTo(0, 0)
-  }, [pathname, hash, type])
+    if (action !== 'POP') {
+      const target = hash ? document.getElementById(hash.slice(1)) : null
+      if (target) target.scrollIntoView()
+      else window.scrollTo(0, 0)
+    }
+  }, [pathname, hash, action])
   return null
 }
 
-function Shell() {
+function AppShell() {
   return (
     <div className="flex min-h-dvh flex-col">
-      <a
-        href="#main"
-        className="sr-only z-[60] bg-navy px-4 py-3 font-bold text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
-      >
+      <a href="#main" className="sr-only z-[60] bg-navy px-4 py-3 font-bold text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3">
         Skip to content
       </a>
-      <Header />
-      <NewStoriesPill />
+      <SiteHeader />
+      <NewStoriesButton />
       <main id="main" tabIndex={-1} className="flex-1 outline-none">
-        {/* Writing an article needs an account; the admin tools need an editor or the owner; the team page needs the owner. Everything else is open. */}
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/latest" element={<Latest />} />
@@ -59,13 +54,15 @@ function Shell() {
           <Route path="/search" element={<Search />} />
           <Route path="/saved" element={<Saved />} />
           <Route path="/about" element={<About />} />
-          <Route path="/submit" element={<AdminGate area="write"><Submit /></AdminGate>} />
-          <Route path="/control" element={<AdminGate><Control /></AdminGate>} />
-          <Route path="/admin" element={<AdminGate area="account"><Admin /></AdminGate>} />
-          <Route path="/admin/team" element={<AdminGate area="team"><AdminTeam /></AdminGate>} />
-          <Route path="/admin/ads" element={<AdminGate><AdminAds /></AdminGate>} />
-          <Route path="/admin/scheduled" element={<AdminGate><AdminScheduled /></AdminGate>} />
-          <Route path="/admin/tags" element={<AdminGate><AdminTags /></AdminGate>} />
+          <Route path="/policy" element={<Policy />} />
+          <Route path="/terms" element={<Terms />} />
+          <Route path="/submit" element={<Submit />} />
+          <Route path="/control" element={<Control />} />
+          <Route path="/admin" element={<Admin />} />
+          <Route path="/admin/team" element={<AdminTeam />} />
+          <Route path="/admin/ads" element={<AdminAds />} />
+          <Route path="/admin/scheduled" element={<AdminScheduled />} />
+          <Route path="/admin/tags" element={<AdminTags />} />
           <Route path="/tag/:tag" element={<Tag />} />
           <Route path="/results" element={<Results />} />
           <Route path="/results/seats" element={<SeatCalculator />} />
@@ -73,8 +70,8 @@ function Shell() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
-      <Footer />
-      <BottomTabs />
+      <SiteFooter />
+      <BottomNav />
     </div>
   )
 }
@@ -82,16 +79,16 @@ function Shell() {
 export default function App() {
   return (
     <BrowserRouter>
-      <ControlProvider>
-        <NewsProvider>
-          <SavedProvider>
-            <AuthProvider>
+      <AuthProvider>
+        <ControlProvider>
+          <NewsProvider>
+            <SavedProvider>
               <ScrollManager />
-              <Shell />
-            </AuthProvider>
-          </SavedProvider>
-        </NewsProvider>
-      </ControlProvider>
+              <AppShell />
+            </SavedProvider>
+          </NewsProvider>
+        </ControlProvider>
+      </AuthProvider>
     </BrowserRouter>
   )
 }

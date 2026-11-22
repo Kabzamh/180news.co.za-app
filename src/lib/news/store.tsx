@@ -276,8 +276,10 @@ export function NewsProvider({ children }: { children: ReactNode }) {
         if (!cancelled && articles.length !== cmsRef.current.length) {
           cmsRef.current = articles
           setCmsArticles(articles)
-        } else if (!cancelled && articles.length === cmsRef.current.length && articles.length > 0) {
-          const changed = articles.some((a, i) => a.id !== cmsRef.current[i]?.id || a.title !== cmsRef.current[i]?.title)
+        } else if (!cancelled && articles.length > 0) {
+          const changed =
+            articles.length !== cmsRef.current.length ||
+            articles.some((a, i) => a.id !== cmsRef.current[i]?.id || a.title !== cmsRef.current[i]?.title)
           if (changed) {
             cmsRef.current = articles
             setCmsArticles(articles)

@@ -36,13 +36,32 @@ function pick(items: Article[], limit: number, needImage = false, seen?: Set<str
   return out
 }
 
-function splitBlock(bySection: Record<string, Article[]>, id: string, featureCount: number, restCount: number, needImage = false): Block {
+function splitBlock(
+  bySection: Record<string, Article[]>,
+  id: string,
+  featureCount: number,
+  restCount: number,
+  needImage = false,
+  placed?: Set<string>,
+): Block {
   const items = interleave(bySection[id] ?? [])
   const seen = new Set<string>()
-  let feature = pick(items, featureCount, needImage, seen)
-  if (feature.length < featureCount) feature = [...feature, ...pick(items, featureCount - feature.length, false, seen)]
-  let rest = pick(items, restCount, needImage, seen)
-  if (rest.length < restCount) rest = [...rest, ...pick(items, restCount - rest.length, false, seen)]
+  const take = (list: Article[], limit: number, images: boolean): Article[] => {
+    const out: Article[] = []
+    for (const item of list) {
+      if (out.length >= limit) break
+      if (placed?.has(item.id) || seen.has(item.id)) continue
+      if (images && !item.image) continue
+      seen.add(item.id)
+      placed?.add(item.id)
+      out.push(item)
+    }
+    return out
+  }
+  let feature = take(items, featureCount, needImage)
+  if (feature.length < featureCount) feature = [...feature, ...take(items, featureCount - feature.length, false)]
+  let rest = take(items, restCount, needImage)
+  if (rest.length < restCount) rest = [...rest, ...take(items, restCount - rest.length, false)]
   return { feature, rest }
 }
 
@@ -55,6 +74,7 @@ function homeLayout(
   lead: Article
   secondary: Article[]
   top: Article[]
+  rail: Article[]
   elections: Block
   southAfrica: Block
   politics: Block
@@ -66,38 +86,41 @@ function homeLayout(
   life: Block
   opinion: Block
 } {
-  const used = new Set<string>()
-  const pool = interleave(FEATURE_SECTIONS.flatMap((id) => bySection[id] ?? []).length ? FEATURE_SECTIONS.flatMap((id) => bySection[id] ?? []) : all).filter(
-    (item) => {
-      if (used.has(item.id)) return false
-      used.add(item.id)
-      return true
-    },
-  )
-  let leadGroup: Article[] = featured ? [featured] : pick(pool, 1, true)
-  if (featured) used.add(featured.id)
-  if (!leadGroup.length) leadGroup = pick(pool, 1)
-  const lead = leadGroup[0]
+  const placed = new Set<string>()
+  const featurePoolSource = FEATURE_SECTIONS.flatMap((id) => bySection[id] ?? [])
+  const poolSource = featurePoolSource.length ? featurePoolSource : all
+  const poolIds = new Set<string>()
+  const pool = interleave(poolSource.filter((item) => (poolIds.has(item.id) ? false : (poolIds.add(item.id), true))))
+  const headlinePool = interleave(headlines)
 
-  const headlinesTop = interleave(headlines).slice(0, TOP_COUNT)
-  const secondarySource = [...headlinesTop.slice(0, 2), ...pick(pool, 2 - Math.min(2, headlinesTop.length), true)]
-  const topSource = [...headlinesTop.slice(2), ...pick(pool, 4 - Math.max(0, headlinesTop.length - 2), true)]
-
-  return {
-    lead,
-    secondary: secondarySource,
-    top: topSource,
-    elections: splitBlock(bySection, 'elections', 1, 6),
-    southAfrica: splitBlock(bySection, 'south-africa', 1, 5),
-    politics: splitBlock(bySection, 'politics', 0, 4, true),
-    business: splitBlock(bySection, 'business', 1, 4),
-    sport: splitBlock(bySection, 'sport', 1, 4, true),
-    world: splitBlock(bySection, 'world', 1, 4),
-    africa: splitBlock(bySection, 'africa', 1, 4),
-    tech: splitBlock(bySection, 'tech', 0, 4, true),
-    life: splitBlock(bySection, 'life', 0, 4, true),
-    opinion: splitBlock(bySection, 'opinion', 0, 6),
+  let lead = featured && !placed.has(featured.id) ? featured : undefined
+  if (featured) placed.add(featured.id)
+  if (!lead) {
+    const withImage = pick(pool, 1, true, placed)
+    lead = withImage[0] ?? pick(pool, 1, false, placed)[0]
   }
+  if (lead) placed.add(lead.id)
+
+  const headlineTop = pick(headlinePool, 2, false, placed)
+  const secondary = [...headlineTop, ...pick(pool, Math.max(0, 2 - headlineTop.length), true, placed)]
+  const headlineRest = pick(headlinePool, TOP_COUNT, false, placed)
+  const top = [...headlineRest, ...pick(pool, Math.max(0, TOP_COUNT - headlineRest.length), true, placed)]
+
+  const elections = splitBlock(bySection, 'elections', 1, 6, false, placed)
+  const southAfrica = splitBlock(bySection, 'south-africa', 1, 5, false, placed)
+  const politics = splitBlock(bySection, 'politics', 0, 4, true, placed)
+  const business = splitBlock(bySection, 'business', 1, 4, false, placed)
+  const sport = splitBlock(bySection, 'sport', 1, 4, true, placed)
+  const world = splitBlock(bySection, 'world', 1, 4, false, placed)
+  const africa = splitBlock(bySection, 'africa', 1, 4, false, placed)
+  const tech = splitBlock(bySection, 'tech', 0, 4, true, placed)
+  const life = splitBlock(bySection, 'life', 0, 4, true, placed)
+  const opinion = splitBlock(bySection, 'opinion', 0, 6, false, placed)
+
+  // the latest rail comes last so it only shows stories not already on the page
+  const rail = all.filter((item) => !placed.has(item.id)).slice(0, 9)
+
+  return { lead, secondary, top, rail, elections, southAfrica, politics, business, sport, world, africa, tech, life, opinion }
 }
 
 function LatestRail({ items }: { items: Article[] }) {
@@ -229,7 +252,7 @@ export default function Home() {
           )}
         </div>
         <div className="lg:col-span-3">
-          <LatestRail items={all.slice(0, 9)} />
+          <LatestRail items={layout.rail} />
         </div>
       </div>
 

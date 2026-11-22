@@ -113,7 +113,7 @@ export function mapCmsArticle(raw: CmsListItem): Article | null {
 let cache: { at: number; articles: Article[] } | null = null
 let inflight: Promise<Article[]> | null = null
 
-const TTL = 60000
+const TTL = 30000
 
 async function fetchJson(url: string): Promise<unknown> {
   const res = await fetch(url, { headers: { Accept: 'application/json' } })
@@ -148,11 +148,21 @@ export function loadCmsArticles(): Promise<Article[]> {
   inflight ??= fetchJson(`${CMS_BASE}/api/public?resource=articles`)
     .then((data) => {
       if (!Array.isArray(data)) throw new Error('Unexpected CMS response')
-      const articles = data.map(mapCmsArticle).filter((a): a is Article => a !== null)
+      const mapped = data.map(mapCmsArticle).filter((a): a is Article => a !== null)
+      // A re-published update keeps its slug but arrives with a new id — show the
+      // newest version only, so past and newly published stories never double up.
+      const bySlug = new Map<string, Article>()
+      for (const article of mapped) {
+        const key = article.slug ?? article.id
+        const existing = bySlug.get(key)
+        if (!existing || (article.published ?? 0) > (existing.published ?? 0)) bySlug.set(key, article)
+      }
+      const articles = [...bySlug.values()]
       return enrichWithMedia(articles)
     })
     .then((articles) => {
       cache = { at: Date.now(), articles }
+      inflight = null
       return articles
     })
     .catch(() => {

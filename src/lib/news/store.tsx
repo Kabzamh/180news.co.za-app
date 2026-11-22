@@ -411,7 +411,16 @@ export function NewsProvider({ children }: { children: ReactNode }) {
     const interval = window.setInterval(() => {
       if (intervalMs > 0 && !document.hidden) void run('auto')
     }, intervalMs || 60000)
-    const tick = window.setInterval(() => setNow(Date.now()), 30000)
+    const tick = window.setInterval(() => {
+      setNow(Date.now())
+      // reload the latest articles automatically for readers at the top of the
+      // page; anyone scrolled down keeps the “new stories” button
+      if (pendingRef.current && !document.hidden && window.scrollY < 120) {
+        mergeFeeds(pendingRef.current)
+        pendingRef.current = null
+        setPendingCount(0)
+      }
+    }, 30000)
     const wake = () => {
       if (intervalMs > 0 && !document.hidden && Date.now() - lastRunAt.current > intervalMs) void run('auto')
     }
@@ -423,7 +432,7 @@ export function NewsProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', wake)
       window.removeEventListener('online', wake)
     }
-  }, [run, intervalMs])
+  }, [run, intervalMs, mergeFeeds])
 
   const applyPending = useCallback(() => {
     if (pendingRef.current) mergeFeeds(pendingRef.current)

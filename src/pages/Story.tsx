@@ -82,17 +82,21 @@ export default function Story() {
   const exists = !!item || !!ownRecord
 
   const related = item ? (bySection[item.section] ?? []).filter((x) => x.id !== item.id).slice(0, 6) : []
-  const more = item ? all.filter((x) => x.id !== item.id && x.image).slice(0, 4) : []
-  const readMore = useMemo(() => {
+  // the three further-reading modules share one placement set, so every other
+  // story is linked exactly once on the page: first the in-body “Read more”
+  // list, then the section sidebar, then the latest-with-pictures grid
+  const further = useMemo(() => {
     const taken = new Set([item?.id ?? id])
-    const out: Article[] = []
+    const read: Article[] = []
     for (const candidate of [...related, ...all]) {
       if (taken.has(candidate.id)) continue
       taken.add(candidate.id)
-      out.push(candidate)
-      if (out.length >= 3) break
+      read.push(candidate)
+      if (read.length >= 3) break
     }
-    return out
+    const sidebar = related.filter((candidate) => !taken.has(candidate.id) && (taken.add(candidate.id), true))
+    const bottom = all.filter((candidate) => !taken.has(candidate.id) && !!candidate.image && (taken.add(candidate.id), true)).slice(0, 4)
+    return { read, sidebar, bottom }
   }, [related, all, item?.id])
 
   useTitle(exists && item ? item.title : exists ? ownRecord?.title : undefined)
@@ -245,13 +249,13 @@ export default function Story() {
             </>
           )}
 
-          {!isCms && readMore.length > 0 && (
+          {!isCms && further.read.length > 0 && (
             <section aria-labelledby="story-read-more" className="mt-8">
               <h2 id="story-read-more" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">
                 Read more
               </h2>
               <ul className="mt-2.5 divide-y divide-line">
-                {readMore.map((x) => (
+                {further.read.map((x) => (
                   <li key={x.id}>
                     <Link
                       to={`/story/${x.id}`}
@@ -292,11 +296,11 @@ export default function Story() {
           {!scheduled && <AdSlot id="article" at="inline" className="mt-9" />}
         </article>
 
-        {!isCms && related.length > 0 && section && (
+        {!isCms && further.sidebar.length > 0 && section && (
           <aside aria-labelledby="story-related" className="lg:col-span-4">
             <SectionHeading id="story-related" title={`More ${section.label}`} to={`/section/${section.id}`} />
             <ul className="divide-y divide-line">
-              {related.map((x) => (
+              {further.sidebar.map((x) => (
                 <li key={x.id} className="py-3.5 first:pt-0">
                   <StoryLine item={x} />
                 </li>
@@ -308,11 +312,11 @@ export default function Story() {
 
       {!scheduled && <AdSlot id="article" at="below" className="wrap mt-12" />}
 
-      {!isCms && more.length > 0 && (
+      {!isCms && further.bottom.length > 0 && (
         <section aria-labelledby="story-more" className="wrap mt-14">
           <SectionHeading id="story-more" title="Latest headlines" to="/latest" moreLabel="See all" />
           <ul className="grid grid-cols-2 gap-x-4 gap-y-7 sm:gap-x-6 lg:grid-cols-4">
-            {more.map((x) => (
+            {further.bottom.map((x) => (
               <li key={x.id}>
                 <StoryCard item={x} size="sm" />
               </li>

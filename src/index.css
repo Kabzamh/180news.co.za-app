@@ -16,4 +16,6 @@
 .lotto-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.875rem 1.25rem;color:#fff}
 .lotto-head h3{font-size:.875rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
 .lotto-row{padding-block:.75rem}
+.lotto-row dt{flex-wrap:wrap;row-gap:.25rem;min-width:0}
+.lotto-row dd{max-width:100%}
 .lotto-foot{border-top:1px solid var(--color-line);padding:.75rem 1.25rem;font-size:12.5px;line-height:1.375}

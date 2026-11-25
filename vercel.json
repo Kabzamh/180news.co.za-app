@@ -1,7 +1,6 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
-    { "source": "/story/:id", "destination": "/api/story-meta?id=:id" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/api/:path*", "destination": "https://www.180news.co.za/api/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

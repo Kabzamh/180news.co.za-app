@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://180news.co.za/</loc><changefreq>always</changefreq><priority>1.0</priority></url>
+  <url><loc>https://180news.co.za/latest</loc><changefreq>always</changefreq><priority>0.9</priority></url>
+  <url><loc>https://180news.co.za/section/elections</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/section/south-africa</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/section/politics</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/section/business</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/section/sport</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/section/world</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/section/africa</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/section/tech</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/section/life</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/section/opinion</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://180news.co.za/results</loc><changefreq>hourly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://180news.co.za/results/party</loc><changefreq>hourly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://180news.co.za/results/seats</loc><changefreq>hourly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://180news.co.za/about</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://180news.co.za/policy</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://180news.co.za/terms</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+</urlset>

@@ -12,11 +12,51 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="180news" />
+    <link rel="canonical" href="https://180news.co.za/" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="author" content="180news" />
     <meta property="og:site_name" content="180news" />
     <meta property="og:title" content="180news — Live South African news headlines" />
     <meta property="og:description" content="Live headlines from South African and international newsrooms, on one front page." />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="/og.png" />
+    <meta property="og:url" content="https://180news.co.za/" />
+    <meta property="og:locale" content="en_ZA" />
+    <meta property="og:image" content="https://180news.co.za/og.png" />
+    <meta property="og:image:secure_url" content="https://180news.co.za/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="180news — live South African news headlines" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@180DegreesNews" />
+    <meta name="twitter:creator" content="@180DegreesNews" />
+    <meta name="twitter:title" content="180news — Live South African news headlines" />
+    <meta name="twitter:description" content="Live headlines from South African and international newsrooms, on one front page." />
+    <meta name="twitter:image" content="https://180news.co.za/og.png" />
+    <meta name="twitter:image:alt" content="180news — live South African news headlines" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "NewsMediaOrganization",
+        "name": "180news",
+        "url": "https://180news.co.za/",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://180news.co.za/logo.png",
+          "width": 480,
+          "height": 274
+        },
+        "sameAs": [
+          "https://www.facebook.com/profile.php?id=61577988715628",
+          "https://x.com/180DegreesNews",
+          "https://www.instagram.com/180degressnews/",
+          "https://www.whatsapp.com/channel/0029VbBLaNJLY6d9zl6t6Z43"
+        ]
+      }
+    </script>
+    <link rel="dns-prefetch" href="https://cms.180news.co.za" />
+    <link rel="dns-prefetch" href="https://api.rss2json.com" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
@@ -42,10 +82,16 @@ function loadRrweb(){if(rrwebStarted)return;rrwebStarted=true;var s=document.cre
 window.addEventListener("message",function(e){if(!e.data||typeof e.data.type!=="string")return;if(e.data.type==="arena:init"){if(!meta)startTime=Date.now();meta={generationId:e.data.generationId||e.data.modelId,tournamentId:e.data.tournamentId};persist();loadRrweb();if(e.source)e.source.postMessage({type:"arena:init-ack",generationId:meta.generationId},"*");}if(e.data.type==="arena:flush"){var resp={type:"arena:recording-data",generationId:meta?meta.generationId:null,rrwebEvents:rrwebEvents,analytics:buildAnalytics()};try{sessionStorage.removeItem(SK);}catch(ex){}if(e.source)e.source.postMessage(resp,"*");}});
 loadRrweb();
 })();</script>
-  <script data-arena-views="true">(function(){var isTop=false;try{isTop=window.self===window.top;}catch(e){}if(!isTop)return;window.__ARENA_META={generationId:"ernie-5-5-flash-preview",tournamentId:"f22e4006-58ee-4467-a921-e37255a408b2"};var payload={tournamentId:"f22e4006-58ee-4467-a921-e37255a408b2",modelId:"ernie-5-5-flash-preview"};try{var r=document.referrer;if(r){var u=new URL(r);payload.referrerDomain=u.hostname;}}catch(e){}try{var vid=null;try{vid=localStorage.getItem('arena_vid');}catch(e){}if(!vid){vid=typeof crypto!=="undefined"&&crypto.randomUUID?crypto.randomUUID():(Date.now().toString(36)+Math.random().toString(36).slice(2)).slice(0,32);try{localStorage.setItem('arena_vid',vid);}catch(e){}}if(vid)payload.viewerId=vid;}catch(e){}try{fetch("https://www.designarena.ai/api/agon/page-views",{"method":"POST","headers":{"Content-Type":"application/json"},"body":JSON.stringify(payload),"keepalive":true});}catch(e){}})();</script>
+  <script data-arena-views="true">(function(){var isTop=false;try{isTop=window.self===window.top;}catch(e){}if(!isTop)return;window.__ARENA_META={generationId:"ohio",tournamentId:"0cf13453-b2ea-4189-b34f-a6e6ce335553"};var payload={tournamentId:"0cf13453-b2ea-4189-b34f-a6e6ce335553",modelId:"ohio"};try{var r=document.referrer;if(r){var u=new URL(r);payload.referrerDomain=u.hostname;}}catch(e){}try{var vid=null;try{vid=localStorage.getItem('arena_vid');}catch(e){}if(!vid){vid=typeof crypto!=="undefined"&&crypto.randomUUID?crypto.randomUUID():(Date.now().toString(36)+Math.random().toString(36).slice(2)).slice(0,32);try{localStorage.setItem('arena_vid',vid);}catch(e){}}if(vid)payload.viewerId=vid;}catch(e){}try{fetch("https://www.designarena.ai/api/agon/page-views",{"method":"POST","headers":{"Content-Type":"application/json"},"body":JSON.stringify(payload),"keepalive":true});}catch(e){}})();</script>
 </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <div style="margin:2rem auto;max-width:42rem;padding:1rem;font-family:Arial,sans-serif;line-height:1.5">
+        <h1>180news needs JavaScript</h1>
+        <p>Please enable JavaScript to read the latest South African and international headlines on 180news.</p>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

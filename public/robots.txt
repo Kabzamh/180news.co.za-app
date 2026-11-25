@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /control
+Disallow: /submit
+Disallow: /saved
+Disallow: /search
+
+Sitemap: https://180news.co.za/sitemap.xml

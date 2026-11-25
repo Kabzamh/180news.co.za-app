@@ -253,6 +253,8 @@ export function useAuth(): AuthCtx { const c = useContext(AuthContext); if (!c) 
 /* ================= News ================= */
 export type FeedState = { items: NewsItem[]; origin: "live" | "relay" | "cache" | "snapshot" | "cms" | "none"; fetchedAt: number; error?: string };
 export type CmsStatus = { state: "live" | "bundle" | "stale" | "unavailable" | "loading"; at: number; count: number };
+export type CmsApprovedComment = { name: string; body: string; at: number | null };
+export type CmsCommentSettings = { enabled: boolean; hold: boolean };
 export type NewsStatus = { kind: "live" | "loading" | "saved" | "offline"; at: number | null; live: number; total: number };
 type NewsCtx = {
   ready: boolean; refreshing: boolean; now: number;
@@ -261,6 +263,7 @@ type NewsCtx = {
   featured?: NewsItem; headlines: NewsItem[];
   status: NewsStatus; cmsStatus: CmsStatus;
   adsEnabled: boolean; cmsAds: CmsAd[]; cmsAdsStatus: CmsStatus;
+  cmsCommentsByArticleId: Record<number, CmsApprovedComment[]>; cmsCommentSettings: CmsCommentSettings;
   pendingCount: number; applyPending: () => void; refresh: () => void;
 };
 const NewsContext = createContext<NewsCtx | null>(null);
@@ -633,7 +636,29 @@ function extractSeedAdsEnabled(js: string): boolean {
   if (!m) return true;
   return m[2] === "!0" || m[2] === "true" || m[2] === "1";
 }
-type CmsBundleSync = { articles: NewsItem[]; adsEnabled: boolean; cmsAds: CmsAd[] };
+function extractSeedComments(js: string): Record<number, CmsApprovedComment[]> {
+  const byArticle: Record<number, CmsApprovedComment[]> = {};
+  for (const obj of extractSeedRecords(js, "comments")) {
+    const articleId = seedNumberField(obj, "article_id");
+    const body = seedStringField(obj, "body")?.trim() ?? "";
+    if (!articleId || !body || (seedStringField(obj, "status") ?? "approved") !== "approved") continue;
+    const comment: CmsApprovedComment = {
+      name: seedStringField(obj, "name")?.trim() || "Reader",
+      body,
+      at: parseCmsDate(seedStringField(obj, "created_at")),
+    };
+    (byArticle[articleId] ??= []).push(comment);
+  }
+  for (const list of Object.values(byArticle)) list.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  return byArticle;
+}
+function extractSeedCommentSettings(js: string): CmsCommentSettings {
+  const m = /\bcomments:\s*\{\s*enabled:\s*(!0|!1|true|false)\s*,\s*hold:\s*(!0|!1|true|false)/.exec(js);
+  if (!m) return { enabled: true, hold: true };
+  const on = (v: string) => v === "!0" || v === "true";
+  return { enabled: on(m[1]), hold: on(m[2]) };
+}
+type CmsBundleSync = { articles: NewsItem[]; adsEnabled: boolean; cmsAds: CmsAd[]; cmsCommentsByArticleId: Record<number, CmsApprovedComment[]>; cmsCommentSettings: CmsCommentSettings };
 let lastBundleAsset = "";
 let bundleSync: CmsBundleSync | null = null;
 async function fetchCmsFromBundle(): Promise<CmsBundleSync> {
@@ -648,11 +673,11 @@ async function fetchCmsFromBundle(): Promise<CmsBundleSync> {
   const js = await res.text();
   const articles = extractSeedArticles(js).map(cmsToItem).filter((x): x is NewsItem => x !== null).sort(byPublished).slice(0, 100);
   if (!articles.length) throw new Error("No published CMS articles in bundle");
-  const next: CmsBundleSync = { articles, adsEnabled: extractSeedAdsEnabled(js), cmsAds: extractSeedAds(js) };
+  const next: CmsBundleSync = { articles, adsEnabled: extractSeedAdsEnabled(js), cmsAds: extractSeedAds(js), cmsCommentsByArticleId: extractSeedComments(js), cmsCommentSettings: extractSeedCommentSettings(js) };
   lastBundleAsset = asset; bundleSync = next;
   return next;
 }
-export type CmsSyncResult = { articles: NewsItem[]; adsEnabled: boolean; cmsAds: CmsAd[]; origin: "live" | "bundle" | "stale"; adsOrigin: "live" | "bundle" | "stale"; at: number };
+export type CmsSyncResult = { articles: NewsItem[]; adsEnabled: boolean; cmsAds: CmsAd[]; cmsCommentsByArticleId: Record<number, CmsApprovedComment[]>; cmsCommentSettings: CmsCommentSettings; origin: "live" | "bundle" | "stale"; adsOrigin: "live" | "bundle" | "stale"; at: number };
 let cmsCache: (CmsSyncResult & { cachedAt: number }) | null = null; let cmsPromise: Promise<CmsSyncResult> | null = null;
 async function fetchCmsJson(url: string): Promise<unknown> { const r = await fetch(url, { headers: { Accept: "application/json" } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }
 function dedupeCms(list: NewsItem[]): NewsItem[] {
@@ -699,24 +724,42 @@ async function fetchCmsAdsLive(): Promise<{ adsEnabled: boolean; cmsAds: CmsAd[]
   const adsEnabled = cmsBoolean(configRecord.ads_enabled ?? configRecord.adsEnabled ?? adsRecord.ads_enabled ?? adsRecord.adsEnabled, true);
   return { adsEnabled, cmsAds: cmsAdsFromPayload(adsPayload) };
 }
+function parseCmsCommentSettings(payload: unknown): CmsCommentSettings | null {
+  const source = asRecord(asRecord(payload).comments ?? (asRecord(payload).comments_enabled !== undefined || asRecord(payload).comments_hold !== undefined ? payload : null));
+  if (!Object.keys(source).length) return null;
+  return {
+    enabled: cmsBoolean(source.enabled ?? source.allow ?? source.open, true),
+    hold: cmsBoolean(source.hold ?? source.holdForApproval ?? source.requiresApproval, true),
+  };
+}
+async function fetchCmsCommentSettingsLive(): Promise<CmsCommentSettings> {
+  for (const resource of ["config", "settings"]) {
+    try {
+      const settings = parseCmsCommentSettings(await fetchCmsJson(`${CMS}/api/public?resource=${resource}`));
+      if (settings) return settings;
+    } catch { /* try the next public settings resource */ }
+  }
+  throw new Error("CMS comment settings unavailable");
+}
 function fetchCmsArticles(force = false): Promise<CmsSyncResult> {
   if (!force && cmsCache && Date.now() - cmsCache.cachedAt < 30000) return Promise.resolve(cmsCache);
   if (cmsPromise) return cmsPromise;
   cmsPromise = (async (): Promise<CmsSyncResult> => {
     try {
       const articles = await fetchCmsLive();
+      const cmsCommentSettings = await fetchCmsCommentSettingsLive().catch((): CmsCommentSettings => ({ enabled: true, hold: true }));
       try {
         const ads = await fetchCmsAdsLive();
-        return { articles, ...ads, origin: "live", adsOrigin: "live", at: Date.now() };
+        return { articles, ...ads, cmsCommentsByArticleId: {}, cmsCommentSettings, origin: "live", adsOrigin: "live", at: Date.now() };
       } catch {
         const bundle = await fetchCmsFromBundle();
-        return { articles, adsEnabled: bundle.adsEnabled, cmsAds: bundle.cmsAds, origin: "live", adsOrigin: "bundle", at: Date.now() };
+        return { articles, adsEnabled: bundle.adsEnabled, cmsAds: bundle.cmsAds, cmsCommentsByArticleId: bundle.cmsCommentsByArticleId, cmsCommentSettings: bundle.cmsCommentSettings, origin: "live", adsOrigin: "bundle", at: Date.now() };
       }
     } catch {
       const bundle = await fetchCmsFromBundle();
       return { ...bundle, origin: "bundle", adsOrigin: "bundle", at: Date.now() };
     }
-  })().then((result) => { cmsCache = { ...result, cachedAt: Date.now() }; cmsPromise = null; return result; }).catch(() => { cmsPromise = null; return cmsCache ? { articles: cmsCache.articles, adsEnabled: cmsCache.adsEnabled, cmsAds: cmsCache.cmsAds, origin: "stale" as const, adsOrigin: "stale" as const, at: cmsCache.at } : { articles: [] as NewsItem[], adsEnabled: false, cmsAds: [] as CmsAd[], origin: "stale" as const, adsOrigin: "stale" as const, at: 0 }; });
+  })().then((result) => { cmsCache = { ...result, cachedAt: Date.now() }; cmsPromise = null; return result; }).catch(() => { cmsPromise = null; return cmsCache ? { articles: cmsCache.articles, adsEnabled: cmsCache.adsEnabled, cmsAds: cmsCache.cmsAds, cmsCommentsByArticleId: cmsCache.cmsCommentsByArticleId, cmsCommentSettings: cmsCache.cmsCommentSettings, origin: "stale" as const, adsOrigin: "stale" as const, at: cmsCache.at } : { articles: [] as NewsItem[], adsEnabled: false, cmsAds: [] as CmsAd[], cmsCommentsByArticleId: {} as Record<number, CmsApprovedComment[]>, cmsCommentSettings: { enabled: true, hold: true }, origin: "stale" as const, adsOrigin: "stale" as const, at: 0 }; });
   return cmsPromise;
 }
 
@@ -735,6 +778,8 @@ export function NewsProvider({ children }: { children: React.ReactNode }) {
   const [cmsAds, setCmsAds] = useState<CmsAd[]>([]);
   const [adsEnabled, setAdsEnabled] = useState(false);
   const [cmsAdsStatus, setCmsAdsStatus] = useState<CmsStatus>({ state: "loading", at: 0, count: 0 });
+  const [cmsCommentsByArticleId, setCmsCommentsByArticleId] = useState<Record<number, CmsApprovedComment[]>>({});
+  const [cmsCommentSettings, setCmsCommentSettings] = useState<CmsCommentSettings>({ enabled: true, hold: true });
   const feedsRef = useRef<Record<string, FeedState>>(initialCache?.feeds ?? {});
   const pendingRef = useRef<Record<string, FeedState> | null>(null);
   const inflightRef = useRef<Promise<void> | null>(null);
@@ -750,8 +795,8 @@ export function NewsProvider({ children }: { children: React.ReactNode }) {
       // Only a live CMS public-API response may put adverts on the public app.
       // Bundle/stale ad records remain available for read-only status, but are never displayed.
       const displayAdsEnabled = result.adsOrigin === "live" && result.adsEnabled;
-      const signature = JSON.stringify({ articles: result.articles.map((a) => [a.id, a.title, a.published, a.summary, a.body?.length ?? 0, a.image ?? ""]), adsEnabled: displayAdsEnabled, adsOrigin: result.adsOrigin, cmsAds: result.cmsAds });
-      if (signature !== cmsSignatureRef.current) { cmsSignatureRef.current = signature; setCmsArticles(result.articles); setCmsAds(result.cmsAds); }
+      const signature = JSON.stringify({ articles: result.articles.map((a) => [a.id, a.title, a.published, a.summary, a.body?.length ?? 0, a.image ?? ""]), adsEnabled: displayAdsEnabled, adsOrigin: result.adsOrigin, cmsAds: result.cmsAds, cmsCommentsByArticleId: result.cmsCommentsByArticleId, cmsCommentSettings: result.cmsCommentSettings });
+      if (signature !== cmsSignatureRef.current) { cmsSignatureRef.current = signature; setCmsArticles(result.articles); setCmsAds(result.cmsAds); setCmsCommentsByArticleId(result.cmsCommentsByArticleId); setCmsCommentSettings(result.cmsCommentSettings); }
       setAdsEnabled(displayAdsEnabled);
       setCmsStatus(result.articles.length || result.origin === "live" ? { state: result.origin, at: result.at || Date.now(), count: result.articles.length } : { state: "unavailable", at: result.at, count: 0 });
       setCmsAdsStatus(result.adsOrigin === "stale" && result.at === 0 ? { state: "unavailable", at: 0, count: 0 } : { state: result.adsOrigin, at: result.at || Date.now(), count: displayAdsEnabled ? result.cmsAds.filter((ad) => ad.enabled && ad.image).length : 0 });
@@ -907,7 +952,7 @@ export function NewsProvider({ children }: { children: React.ReactNode }) {
     if (anyAt > 0) return { kind: "saved", at: anyAt, live: 0, total };
     return { kind: "offline", at: null, live: 0, total };
   }, [feeds, ready, refreshing, now, cmsStatus]);
-  const value = useMemo<NewsCtx>(() => ({ ready, refreshing, now, feeds: feedsWithCms, ...derived, status, cmsStatus, adsEnabled, cmsAds, cmsAdsStatus, pendingCount, applyPending, refresh }), [ready, refreshing, now, feedsWithCms, derived, status, cmsStatus, adsEnabled, cmsAds, cmsAdsStatus, pendingCount, applyPending, refresh]);
+  const value = useMemo<NewsCtx>(() => ({ ready, refreshing, now, feeds: feedsWithCms, ...derived, status, cmsStatus, adsEnabled, cmsAds, cmsAdsStatus, cmsCommentsByArticleId, cmsCommentSettings, pendingCount, applyPending, refresh }), [ready, refreshing, now, feedsWithCms, derived, status, cmsStatus, adsEnabled, cmsAds, cmsAdsStatus, cmsCommentsByArticleId, cmsCommentSettings, pendingCount, applyPending, refresh]);
   return <NewsContext.Provider value={value}>{children}</NewsContext.Provider>;
 }
 export function useNews(): NewsCtx { const c = useContext(NewsContext); if (!c) throw new Error("useNews must be used inside <NewsProvider>"); return c; }

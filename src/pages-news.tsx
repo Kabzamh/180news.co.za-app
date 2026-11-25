@@ -204,7 +204,7 @@ function SingleMedia({ m }: { m: NonNullable<NewsItem["media"]>[number] }) {
     </figure>
   );
 }
-type CmsComment = { name: string; body: string; at: number | null };
+type CmsComment = { name: string; body: string; at: number | null; status?: string };
 function parseComments(raw: unknown): CmsComment[] {
   if (!Array.isArray(raw)) return [];
   return raw.filter((c) => c && typeof c === "object").map((c) => {
@@ -212,23 +212,39 @@ function parseComments(raw: unknown): CmsComment[] {
     const body = typeof (o.body ?? o.text ?? o.comment) === "string" ? String(o.body ?? o.text ?? o.comment).trim() : "";
     const atRaw = o.createdAt ?? o.created_at ?? o.when ?? o.publishedAt ?? o.at ?? o.date;
     const at = typeof atRaw === "number" && atRaw > 0 ? atRaw : typeof atRaw === "string" && Number.isFinite(Date.parse(atRaw)) ? Date.parse(atRaw) : null;
-    return { name: (typeof (o.name ?? o.author) === "string" ? String(o.name ?? o.author).trim() : "") || "Reader", body, at };
-  }).filter((c) => c.body.length > 0);
+    return { name: (typeof (o.name ?? o.author) === "string" ? String(o.name ?? o.author).trim() : "") || "Reader", body, at, status: typeof o.status === "string" ? o.status.toLowerCase() : undefined };
+  }).filter((c) => c.body.length > 0 && (!c.status || c.status === "approved"));
 }
-function StoryComments({ cmsId }: { cmsId: number }) {
-  const { now } = useNews();
-  const [data, setData] = useState<{ open: boolean; comments: CmsComment[] } | null>(null);
+function ArticleComments({ item }: { item: NewsItem }) {
+  const { now, cmsCommentsByArticleId, cmsCommentSettings, cmsStatus } = useNews();
+  const cmsId = isCmsItem(item) ? cmsNumericId(item.id) : null;
+  const fallbackComments = cmsId !== null ? cmsCommentsByArticleId[cmsId] ?? [] : [];
+  const [liveData, setLiveData] = useState<{ open: boolean; comments: CmsComment[] } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [name, setName] = useState(""); const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
-  const load = () => fetch(`${CMS}/api/public?resource=comments&id=${cmsId}`, { headers: { Accept: "application/json" } }).then(async (r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); const j = await r.json(); return Array.isArray(j) ? { open: true, comments: parseComments(j) } : { open: j.open !== false, comments: parseComments(j.comments ?? j.data) }; });
-  useEffect(() => { let dead = false; setLoading(true); setFailed(false); load().then((d) => { if (!dead) setData(d); }).catch(() => { if (!dead) setFailed(true); }).finally(() => { if (!dead) setLoading(false); }); return () => { dead = true; }; // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cmsId]);
-  if (loading && !data) return <section aria-labelledby="story-comments" className="mt-10 border-t border-line pt-8"><h2 id="story-comments" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">Comments</h2><p className="mt-4 text-[14px] text-muted">Loading comments…</p></section>;
-  if (failed || !data) return null;
-  if (!data.open) return <section aria-labelledby="story-comments" className="mt-10 border-t border-line pt-8"><h2 id="story-comments" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">Comments</h2><p className="mt-4 text-[15px] text-muted">Comments are closed on this story.</p></section>;
+  const storyUrl = /^https:\/\/180news\.co\.za\/story\//.test(item.link) ? item.link : `https://180news.co.za${storyPath(item)}`;
+  const load = async (): Promise<{ open: boolean; comments: CmsComment[] }> => {
+    const params = new URLSearchParams({ resource: "comments", key: item.id });
+    if (cmsId !== null) params.set("id", String(cmsId));
+    const r = await fetch(`${CMS}/api/public?${params.toString()}`, { headers: { Accept: "application/json" } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (Array.isArray(j)) return { open: true, comments: parseComments(j) };
+    const record = j && typeof j === "object" ? j as Record<string, unknown> : {};
+    return { open: record.open !== false && record.enabled !== false, comments: parseComments(record.comments ?? record.data ?? record.items) };
+  };
+  useEffect(() => {
+    let dead = false;
+    setLoading(true); setLoadFailed(false);
+    load().then((d) => { if (!dead) setLiveData(d); }).catch(() => { if (!dead) setLoadFailed(true); }).finally(() => { if (!dead) setLoading(false); });
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id, cmsId]);
+  const comments = liveData?.comments ?? fallbackComments;
+  const commentsOpen = cmsCommentSettings.enabled && (liveData?.open ?? true);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const n = name.trim(); const b = body.trim();
@@ -236,42 +252,61 @@ function StoryComments({ cmsId }: { cmsId: number }) {
     if (b.length < 2) { setNotice({ tone: "error", text: "Write your comment." }); return; }
     setSending(true); setNotice(null);
     try {
-      const r = await fetch(`${CMS}/api/public?resource=comment`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ id: cmsId, name: n.slice(0, 60), body: b.slice(0, 800) }) });
-      if (!r.ok) { setNotice({ tone: "error", text: "The comment could not be sent just now. Please try again." }); return; }
-      const j = await r.json().catch(() => null);
-      if (j && j.ok === true) { setBody(""); setNotice({ tone: "ok", text: "Thank you — your comment was sent to the newsroom and appears once it has been approved." }); load().then(setData).catch(() => { /* ignore */ }); }
-      else {
+      const payload = {
+        ...(cmsId !== null ? { id: cmsId, article_id: cmsId } : {}),
+        article_key: item.id,
+        article_url: storyUrl,
+        external_url: item.link,
+        headline: item.title,
+        title: item.title,
+        source_id: item.sourceId,
+        source: sourceName(item.sourceId),
+        name: n.slice(0, 60),
+        body: b.slice(0, 800),
+        status: "pending",
+      };
+      const r = await fetch(`${CMS}/api/public?resource=comment`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(payload) });
+      const j = await r.json().catch(() => null) as Record<string, unknown> | null;
+      if (!r.ok || (j && j.ok === false)) {
         const fields = j?.fields;
-        if (fields && typeof fields === "object" && Object.values(fields).length) setNotice({ tone: "error", text: String(Object.values(fields)[0]) });
-        else setNotice({ tone: "error", text: "The comment could not be sent just now. Please try again." });
+        const fieldMessage = fields && typeof fields === "object" && Object.values(fields).length ? String(Object.values(fields)[0]) : "";
+        setNotice({ tone: "error", text: fieldMessage || (typeof j?.error === "string" ? j.error : typeof j?.message === "string" ? j.message : "The comment could not be sent to the CMS just now. Please try again.") });
+        return;
       }
-    } catch { setNotice({ tone: "error", text: "The comment could not be sent just now. Please try again." }); }
-    finally { setSending(false); }
+      setBody("");
+      setNotice({ tone: "ok", text: cmsCommentSettings.hold ? "Thank you — your comment has been sent to the CMS for approval. It will appear here only if a moderator approves it." : "Thank you — your comment has been sent to the CMS for moderation." });
+      load().then(setLiveData).catch(() => { /* the submitted comment stays held in the CMS */ });
+    } catch {
+      setNotice({ tone: "error", text: "The comment could not be sent to the CMS just now. Please try again." });
+    } finally { setSending(false); }
   };
   const inputCls = "w-full border border-ink/35 bg-paper px-3.5 text-base text-ink placeholder:text-muted";
   return (
     <section aria-labelledby="story-comments" className="mt-10 border-t border-line pt-8">
-      <h2 id="story-comments" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">Comments{data.comments.length > 0 ? ` · ${data.comments.length}` : ""}</h2>
-      {data.comments.length > 0 ? (
-        <ul className="mt-3 divide-y divide-line">{data.comments.map((c, i) => (
+      <h2 id="story-comments" className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">Comments{comments.length > 0 ? ` · ${comments.length}` : ""}</h2>
+      {loading && comments.length === 0 ? <p className="mt-4 text-[14px] text-muted">Loading approved comments…</p> : comments.length > 0 ? (
+        <ul className="mt-3 divide-y divide-line">{comments.map((c, i) => (
           <li key={`${c.name}-${c.at ?? i}-${i}`} className="py-4 first:pt-0">
             <p className="text-[14px] leading-5"><span className="font-extrabold text-ink">{c.name}</span>{c.at !== null && <span className="text-muted"> · <time dateTime={new Date(c.at).toISOString()} title={dateTimeSAST(c.at)}>{relTime(c.at, now)}</time></span>}</p>
             <p className="mt-1.5 whitespace-pre-line text-[16px] leading-relaxed text-body">{c.body}</p>
           </li>
         ))}</ul>
-      ) : <p className="mt-3 text-[15px] text-muted">No comments yet. Be the first to have your say — comments are checked by the newsroom before they appear.</p>}
-      <form className="mt-6 space-y-3 border border-line bg-wash p-5" onSubmit={submit}>
-        <p className="text-[14px] font-extrabold text-navy">Have your say</p>
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,16rem)_1fr]">
-          <div><label htmlFor="comment-name" className="sr-only">Your name</label><input id="comment-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" maxLength={60} autoComplete="name" className={`${inputCls} h-12`} /></div>
-          <div><label htmlFor="comment-body" className="sr-only">Your comment</label><textarea id="comment-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write your comment" maxLength={800} rows={3} className={`${inputCls} resize-y`} /></div>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <button type="submit" disabled={sending} className="inline-flex h-12 cursor-pointer items-center gap-2 bg-brand px-6 text-[15px] font-extrabold text-white hover:bg-brand-strong disabled:cursor-progress disabled:opacity-70">{sending ? "Sending…" : "Post comment"}</button>
-          <p className="text-[12.5px] text-muted">Comments are moderated by the newsroom before they appear.</p>
-        </div>
-        {notice && <p role={notice.tone === "error" ? "alert" : "status"} className={`text-[14px] font-bold ${notice.tone === "error" ? "text-brand" : "text-[#0b5a2e]"}`}>{notice.text}</p>}
-      </form>
+      ) : <p className="mt-3 text-[15px] text-muted">No approved comments yet. Be the first to have your say.</p>}
+      {loadFailed && cmsStatus.state !== "bundle" && <p className="mt-3 text-[13.5px] text-muted">Approved comments could not be refreshed just now.</p>}
+      {commentsOpen ? (
+        <form className="mt-6 space-y-3 border border-line bg-wash p-5" onSubmit={submit}>
+          <p className="text-[14px] font-extrabold text-navy">Have your say</p>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,16rem)_1fr]">
+            <div><label htmlFor="comment-name" className="sr-only">Your name</label><input id="comment-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" maxLength={60} autoComplete="name" className={`${inputCls} h-12`} /></div>
+            <div><label htmlFor="comment-body" className="sr-only">Your comment</label><textarea id="comment-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write your comment" maxLength={800} rows={3} className={`${inputCls} resize-y`} /></div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <button type="submit" disabled={sending} className="inline-flex h-12 cursor-pointer items-center gap-2 bg-brand px-6 text-[15px] font-extrabold text-white hover:bg-brand-strong disabled:cursor-progress disabled:opacity-70">{sending ? "Sending to CMS…" : "Send for CMS approval"}</button>
+            <p className="text-[12.5px] text-muted">{cmsCommentSettings.hold ? "The CMS newsroom approves or declines every comment before it appears." : "Comments are moderated in the CMS and may be declined or removed."}</p>
+          </div>
+          {notice && <p role={notice.tone === "error" ? "alert" : "status"} className={`text-[14px] font-bold ${notice.tone === "error" ? "text-brand" : "text-[#0b5a2e]"}`}>{notice.text}</p>}
+        </form>
+      ) : <p className="mt-4 text-[15px] text-muted">Comments are closed on this story.</p>}
     </section>
   );
 }
@@ -441,7 +476,7 @@ export function StoryPage() {
             )}
             {!scheduled && !takenDown && <ArticleForwardIcons item={item} />}
           </div>
-          {isCms && cmsId !== null && <StoryComments cmsId={cmsId} />}
+          {!scheduled && !takenDown && <ArticleComments key={item.id} item={item} />}
           {source && <p className="mt-4 border-t border-line pt-4 text-sm text-muted">More from <a href={source.home} target="_blank" rel="noopener noreferrer" className="font-bold text-navy underline">{source.name}</a></p>}
           {!scheduled && <AdSlot id="article" at="inline" className="mt-9" />}
         </article>

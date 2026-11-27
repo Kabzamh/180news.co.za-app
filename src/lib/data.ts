@@ -2,6 +2,8 @@
 export const SITE_NAME = "180news";
 export const ORIGIN = "https://www.180news.co.za";
 export const CMS = "https://cms.180news.co.za";
+// Public, read-only Supabase feed; the CMS origin still serves its image assets.
+export const NEWSROOM_PUBLIC_API = "https://javkaoplhtexqslyphqe.supabase.co/functions/v1/newsroom-public";
 
 export type SectionDef = { id: string; label: string };
 export const SECTIONS: SectionDef[] = [

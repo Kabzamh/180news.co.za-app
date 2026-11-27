@@ -19,6 +19,7 @@ export default defineConfig(async ({ mode }) => {
 
   return {
     plugins,
+    server: { host: '0.0.0.0', allowedHosts: ['.e2b.app'] },
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     define: processEnvDefines,
   };

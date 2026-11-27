@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { Bookmark, ChevronRight, ExternalLink, Play, Search, Trash2, X } from "lucide-react";
-import { useControl, useNews, usePageTitle, useSaved } from "./lib/providers";
-import { CMS, SECTION_MAP, SOURCES, dayLabel, relTime, sourceName, storyPath, tagPath, timeHM, dateTimeSAST, ymd, feedsForSection, cmsNumericId, isCmsItem, type NewsItem } from "./lib/data";
+import { fetchPublishedCmsStory, useControl, useNews, usePageTitle, useSaved } from "./lib/providers";
+import { CMS, NEWSROOM_PUBLIC_API, SECTION_MAP, SOURCES, dayLabel, relTime, sourceName, storyPath, tagPath, timeHM, dateTimeSAST, ymd, feedsForSection, cmsNumericId, isCmsItem, type NewsItem } from "./lib/data";
 import { AdSlot, FeedsDown, GridSkeleton, IecSummary, LeadCard, PageHead, RandWatch, RowCard, SOCIALS, SaveButton, SectionHead, StoryCard, StoryImage, TextCard } from "./components";
 
 const LATEST_PAGE = 30;
@@ -215,6 +215,9 @@ function parseComments(raw: unknown): CmsComment[] {
     return { name: (typeof (o.name ?? o.author) === "string" ? String(o.name ?? o.author).trim() : "") || "Reader", body, at, status: typeof o.status === "string" ? o.status.toLowerCase() : undefined };
   }).filter((c) => c.body.length > 0 && (!c.status || c.status === "approved"));
 }
+// Public comment submission has not yet been connected to Supabase. Approved
+// comments can still be read, but do not offer a form that cannot deliver.
+const COMMENT_SUBMISSION_CONNECTED = false;
 function ArticleComments({ item }: { item: NewsItem }) {
   const { now, cmsCommentsByArticleId, cmsCommentSettings, cmsStatus } = useNews();
   const cmsId = isCmsItem(item) ? cmsNumericId(item.id) : null;
@@ -229,7 +232,8 @@ function ArticleComments({ item }: { item: NewsItem }) {
   const load = async (): Promise<{ open: boolean; comments: CmsComment[] }> => {
     const params = new URLSearchParams({ resource: "comments", key: item.id });
     if (cmsId !== null) params.set("id", String(cmsId));
-    const r = await fetch(`${CMS}/api/public?${params.toString()}`, { headers: { Accept: "application/json" } });
+    const readEndpoint = cmsId !== null ? NEWSROOM_PUBLIC_API : `${CMS}/api/public`;
+    const r = await fetch(`${readEndpoint}?${params.toString()}`, { headers: { Accept: "application/json" }, cache: "no-store" });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     if (Array.isArray(j)) return { open: true, comments: parseComments(j) };
@@ -244,9 +248,10 @@ function ArticleComments({ item }: { item: NewsItem }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, cmsId]);
   const comments = liveData?.comments ?? fallbackComments;
-  const commentsOpen = cmsCommentSettings.enabled && (liveData?.open ?? true);
+  const commentsOpen = COMMENT_SUBMISSION_CONNECTED && cmsCommentSettings.enabled && (liveData?.open ?? true);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!COMMENT_SUBMISSION_CONNECTED) return;
     const n = name.trim(); const b = body.trim();
     if (n.length < 2) { setNotice({ tone: "error", text: "Enter your name." }); return; }
     if (b.length < 2) { setNotice({ tone: "error", text: "Write your comment." }); return; }
@@ -291,7 +296,7 @@ function ArticleComments({ item }: { item: NewsItem }) {
             <p className="mt-1.5 whitespace-pre-line text-[16px] leading-relaxed text-body">{c.body}</p>
           </li>
         ))}</ul>
-      ) : <p className="mt-3 text-[15px] text-muted">No approved comments yet. Be the first to have your say.</p>}
+      ) : <p className="mt-3 text-[15px] text-muted">No approved comments yet.</p>}
       {loadFailed && cmsStatus.state !== "bundle" && <p className="mt-3 text-[13.5px] text-muted">Approved comments could not be refreshed just now.</p>}
       {commentsOpen ? (
         <form className="mt-6 space-y-3 border border-line bg-wash p-5" onSubmit={submit}>
@@ -306,7 +311,7 @@ function ArticleComments({ item }: { item: NewsItem }) {
           </div>
           {notice && <p role={notice.tone === "error" ? "alert" : "status"} className={`text-[14px] font-bold ${notice.tone === "error" ? "text-brand" : "text-[#0b5a2e]"}`}>{notice.text}</p>}
         </form>
-      ) : <p className="mt-4 text-[15px] text-muted">Comments are closed on this story.</p>}
+      ) : <p className="mt-4 text-[15px] text-muted">{COMMENT_SUBMISSION_CONNECTED ? "Comments are closed on this story." : "New comments are temporarily unavailable."}</p>}
     </section>
   );
 }
@@ -383,7 +388,31 @@ export function StoryPage() {
   const { byId, bySection, all, now } = useNews();
   const { articles: ownArticles, liveAt } = useControl();
   const { saved } = useSaved();
-  const item = byId.get(id) ?? saved.find((s) => s.id === id);
+  const liveItem = byId.get(id);
+  const numericCmsId = cmsNumericId(id);
+  const [lookup, setLookup] = useState<{ id: string; pending: boolean; item: NewsItem | null }>({ id: "", pending: false, item: null });
+  useEffect(() => {
+    if (numericCmsId === null || liveItem) {
+      setLookup({ id, pending: false, item: null });
+      return;
+    }
+    let active = true;
+    let sequence = 0;
+    setLookup({ id, pending: true, item: null });
+    const check = async () => {
+      const request = ++sequence;
+      const result = await fetchPublishedCmsStory(numericCmsId);
+      if (active && request === sequence) setLookup({ id, pending: false, item: result });
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [id, numericCmsId, liveItem]);
+  const savedItem = saved.find((s) => s.id === id);
+  // CMS copies in saved storage can outlive an editorial takedown. Never use
+  // them as authority; older stories are fetched individually instead.
+  const item = liveItem ?? (numericCmsId !== null && lookup.id === id ? lookup.item : null) ?? (savedItem && !isCmsItem(savedItem) ? savedItem : undefined);
+  const verifyingCms = numericCmsId !== null && !liveItem && (lookup.id !== id || lookup.pending);
   const own = ownArticles.find((a) => a.id === id);
   const scheduled = !!own && (own.publishAt ?? 0) > liveAt;
   const takenDown = !!own?.hidden;
@@ -399,10 +428,13 @@ export function StoryPage() {
     return { read, sidebar, bottom };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [relatedSame, all, item?.id]);
+  if (!exists && verifyingCms) return (
+    <div className="wrap max-w-3xl py-12" role="status" aria-label="Loading story">Checking story availability…</div>
+  );
   if (!exists) return (
     <div className="wrap py-20 text-center">
       <h1 className="text-3xl font-extrabold tracking-tight md:text-4xl">This story has moved on</h1>
-      <p className="mx-auto mt-3 max-w-lg text-[17px] leading-relaxed text-body">180news shows what is in each publisher’s live feed, and this headline has dropped out of it. Stories you save stay available here even after that happens.</p>
+      <p className="mx-auto mt-3 max-w-lg text-[17px] leading-relaxed text-body">This story may have been removed or its publication status could not be checked. Please try again later or browse the latest stories.</p>
       <div className="mt-7 flex flex-wrap justify-center gap-3">
         <Link to="/" className="inline-flex h-12 items-center bg-brand px-6 text-[15px] font-extrabold text-white hover:bg-brand-strong">Go to top stories</Link>
         <Link to="/latest" className="inline-flex h-12 items-center border-2 border-navy px-6 text-[15px] font-extrabold text-navy hover:bg-navy hover:text-white">See the latest</Link>
@@ -542,6 +574,7 @@ export function SearchPage() {
 export function SavedPage() {
   usePageTitle("Saved");
   const { saved, remove } = useSaved();
+  const { byId } = useNews();
   return (
     <div className="wrap max-w-[860px] pt-7 md:pt-10">
       <PageHead title="Saved"><p className="mt-2 text-[15px] text-muted" aria-live="polite">{saved.length === 0 ? "Your reading list, kept on this device." : `${saved.length} ${saved.length === 1 ? "story" : "stories"} kept on this device.`}</p></PageHead>
@@ -549,23 +582,29 @@ export function SavedPage() {
         <div className="mt-10 border border-dashed border-line bg-wash px-6 py-14 text-center">
           <Bookmark size={30} strokeWidth={2} className="mx-auto text-navy" aria-hidden="true" />
           <h2 className="mt-4 text-2xl font-extrabold tracking-tight">Nothing saved yet</h2>
-          <p className="mx-auto mt-2 max-w-md text-[16px] leading-relaxed text-body">Tap the bookmark on any story to keep it here. Saved stories stay available even after they leave the live feeds.</p>
+          <p className="mx-auto mt-2 max-w-md text-[16px] leading-relaxed text-body">Tap the bookmark on any story to keep it here. 180news stories are checked for availability when opened.</p>
           <Link to="/" className="mt-6 inline-flex h-12 items-center bg-brand px-6 text-[15px] font-extrabold text-white hover:bg-brand-strong">Browse top stories</Link>
         </div>
       ) : (
         <ul className="mt-6 divide-y divide-line border-b border-line">
-          {saved.map((u) => (
-            <li key={u.id} className="flex items-start gap-4 py-5">
-              <div className="group relative flex min-w-0 flex-1 items-start gap-4">
-                <StoryImage item={u} className="aspect-[4/3] w-[96px] shrink-0 sm:w-[150px]" />
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-[17px] font-extrabold leading-[1.25] tracking-[-0.005em] sm:text-xl"><Link to={`/story/${u.id}`} className="decoration-brand decoration-2 underline-offset-[3px] after:absolute after:inset-0 after:content-[''] group-hover:underline">{u.title}</Link></h2>
-                  <p className="mt-1.5 text-[12.5px] leading-5"><span className="font-extrabold uppercase tracking-[0.04em] text-brand">{sourceName(u.sourceId)}</span>{u.published !== null && <span className="text-muted"> · {dateTimeSAST(u.published)}</span>}</p>
+          {saved.map((u) => {
+            // A CMS bookmark is only a reference, not proof of publication.
+            // The individual story page can verify older stories on demand.
+            const current = isCmsItem(u) ? byId.get(u.id) : u;
+            const label = current?.title ?? "180news story — open to check availability";
+            return (
+              <li key={u.id} className="flex items-start gap-4 py-5">
+                <div className="group relative flex min-w-0 flex-1 items-start gap-4">
+                  {current && <StoryImage item={current} className="aspect-[4/3] w-[96px] shrink-0 sm:w-[150px]" />}
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-[17px] font-extrabold leading-[1.25] tracking-[-0.005em] sm:text-xl"><Link to={`/story/${u.id}`} className="decoration-brand decoration-2 underline-offset-[3px] after:absolute after:inset-0 after:content-[''] group-hover:underline">{label}</Link></h2>
+                    {current && <p className="mt-1.5 text-[12.5px] leading-5"><span className="font-extrabold uppercase tracking-[0.04em] text-brand">{sourceName(current.sourceId)}</span>{current.published !== null && <span className="text-muted"> · {dateTimeSAST(current.published)}</span>}</p>}
+                  </div>
                 </div>
-              </div>
-              <button type="button" onClick={() => remove(u.id)} aria-label={`Remove from saved: ${u.title}`} title="Remove from saved" className="-mr-2 grid size-11 shrink-0 cursor-pointer place-items-center rounded-full text-muted hover:bg-brand-tint hover:text-brand"><Trash2 size={19} strokeWidth={2.2} aria-hidden="true" /></button>
-            </li>
-          ))}
+                <button type="button" onClick={() => remove(u.id)} aria-label={`Remove from saved: ${label}`} title="Remove from saved" className="-mr-2 grid size-11 shrink-0 cursor-pointer place-items-center rounded-full text-muted hover:bg-brand-tint hover:text-brand"><Trash2 size={19} strokeWidth={2.2} aria-hidden="true" /></button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

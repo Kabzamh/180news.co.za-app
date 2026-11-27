@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { FEEDS, SECTIONS, feedsForSection, isNewsItem, toNewsItem, dedupeCap, byPublished, titleKey, CMS, CMS_FEED_ID, ORIGIN, SITE_NAME, SECTION_MAP, cmsNumericId, cmsStoryId, type FeedDef, type NewsItem } from "./data";
+import { FEEDS, SECTIONS, feedsForSection, isNewsItem, toNewsItem, dedupeCap, byPublished, titleKey, CMS, NEWSROOM_PUBLIC_API, CMS_FEED_ID, ORIGIN, SITE_NAME, SECTION_MAP, cmsNumericId, cmsStoryId, type FeedDef, type NewsItem } from "./data";
 
 /* ================= Control (local display settings / own articles) =================
    Adverts are intentionally absent here: the CMS at cms.180news.co.za is the
@@ -394,12 +394,8 @@ async function fetchSectionFeeds(feeds: FeedDef[]): Promise<Record<string, Fetch
 // image_caption, image_credit, author_name, placement (main|headline|none), status,
 // publish_at, media[], …} and story paths /story/my-cmsNNNNNNN. We map both that
 // contract and the older camelCase shape the original front page expected.
-// NOTE: the CMS currently implements /api/public only inside its own page (there is
-// no HTTP endpoint yet — direct requests 404), so after trying the live API we fall
-// back to reading the published articles seeded in the CMS app bundle itself. The
-// live API is always tried first, so this upgrades automatically the moment the
-// CMS ships real endpoints; bundle articles an editor creates are visible once the
-// CMS is redeployed, and live-API articles the moment they publish.
+// The read-only Supabase feed is the authoritative source. Do not fall back to
+// the CMS bundle: its old seed could resurrect a story an editor has unpublished.
 const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? v as Record<string, unknown> : {});
 function parseCmsDate(v: unknown): number | null {
@@ -679,7 +675,28 @@ async function fetchCmsFromBundle(): Promise<CmsBundleSync> {
 }
 export type CmsSyncResult = { articles: NewsItem[]; adsEnabled: boolean; cmsAds: CmsAd[]; cmsCommentsByArticleId: Record<number, CmsApprovedComment[]>; cmsCommentSettings: CmsCommentSettings; origin: "live" | "bundle" | "stale"; adsOrigin: "live" | "bundle" | "stale"; at: number };
 let cmsCache: (CmsSyncResult & { cachedAt: number }) | null = null; let cmsPromise: Promise<CmsSyncResult> | null = null;
-async function fetchCmsJson(url: string): Promise<unknown> { const r = await fetch(url, { headers: { Accept: "application/json" } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }
+async function fetchCmsJson(url: string): Promise<unknown> {
+  const requested = new URL(url);
+  if (requested.origin !== CMS || requested.pathname !== "/api/public") throw new Error("Invalid newsroom URL");
+  const endpoint = new URL(NEWSROOM_PUBLIC_API);
+  endpoint.search = requested.search;
+  const r = await fetch(endpoint, { headers: { Accept: "application/json" }, cache: "no-store" });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+/** Resolve older CMS stories individually and never trust a saved local copy. */
+export async function fetchPublishedCmsStory(id: number): Promise<NewsItem | null> {
+  if (!Number.isSafeInteger(id) || id < 1) return null;
+  try {
+    const raw = await fetchCmsJson(`${CMS}/api/public?resource=article&id=${id}`);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const item = cmsToItem(raw as Record<string, unknown>);
+    return item && cmsNumericId(item.id) === id ? item : null;
+  } catch {
+    // If publication cannot be verified, fail closed rather than use stale data.
+    return null;
+  }
+}
 function dedupeCms(list: NewsItem[]): NewsItem[] {
   const byKey = new Map<string, NewsItem>();
   for (const a of list) { const prev = byKey.get(a.id); if (!prev || (a.body && !prev.body) || (a.published ?? 0) > (prev.published ?? 0)) byKey.set(a.id, prev && a.body ? { ...prev, ...a } : a); }
@@ -745,21 +762,15 @@ function fetchCmsArticles(force = false): Promise<CmsSyncResult> {
   if (!force && cmsCache && Date.now() - cmsCache.cachedAt < 30000) return Promise.resolve(cmsCache);
   if (cmsPromise) return cmsPromise;
   cmsPromise = (async (): Promise<CmsSyncResult> => {
-    try {
-      const articles = await fetchCmsLive();
-      const cmsCommentSettings = await fetchCmsCommentSettingsLive().catch((): CmsCommentSettings => ({ enabled: true, hold: true }));
-      try {
-        const ads = await fetchCmsAdsLive();
-        return { articles, ...ads, cmsCommentsByArticleId: {}, cmsCommentSettings, origin: "live", adsOrigin: "live", at: Date.now() };
-      } catch {
-        const bundle = await fetchCmsFromBundle();
-        return { articles, adsEnabled: bundle.adsEnabled, cmsAds: bundle.cmsAds, cmsCommentsByArticleId: bundle.cmsCommentsByArticleId, cmsCommentSettings: bundle.cmsCommentSettings, origin: "live", adsOrigin: "bundle", at: Date.now() };
-      }
-    } catch {
-      const bundle = await fetchCmsFromBundle();
-      return { ...bundle, origin: "bundle", adsOrigin: "bundle", at: Date.now() };
-    }
-  })().then((result) => { cmsCache = { ...result, cachedAt: Date.now() }; cmsPromise = null; return result; }).catch(() => { cmsPromise = null; return cmsCache ? { articles: cmsCache.articles, adsEnabled: cmsCache.adsEnabled, cmsAds: cmsCache.cmsAds, cmsCommentsByArticleId: cmsCache.cmsCommentsByArticleId, cmsCommentSettings: cmsCache.cmsCommentSettings, origin: "stale" as const, adsOrigin: "stale" as const, at: cmsCache.at } : { articles: [] as NewsItem[], adsEnabled: false, cmsAds: [] as CmsAd[], cmsCommentsByArticleId: {} as Record<number, CmsApprovedComment[]>, cmsCommentSettings: { enabled: true, hold: true }, origin: "stale" as const, adsOrigin: "stale" as const, at: 0 }; });
+    const articles = await fetchCmsLive();
+    const cmsCommentSettings = await fetchCmsCommentSettingsLive().catch((): CmsCommentSettings => ({ enabled: false, hold: true }));
+    const ads = await fetchCmsAdsLive().catch(() => ({ adsEnabled: false, cmsAds: [] as CmsAd[] }));
+    return { articles, ...ads, cmsCommentsByArticleId: {}, cmsCommentSettings, origin: "live", adsOrigin: "live", at: Date.now() };
+  })().then((result) => { cmsCache = { ...result, cachedAt: Date.now() }; cmsPromise = null; return result; }).catch(() => {
+    // Never resurrect stories from an old CMS bundle after an outage or unpublish.
+    cmsCache = null; cmsPromise = null;
+    return { articles: [] as NewsItem[], adsEnabled: false, cmsAds: [] as CmsAd[], cmsCommentsByArticleId: {} as Record<number, CmsApprovedComment[]>, cmsCommentSettings: { enabled: false, hold: true }, origin: "stale" as const, adsOrigin: "stale" as const, at: 0 };
+  });
   return cmsPromise;
 }
 
@@ -795,7 +806,8 @@ export function NewsProvider({ children }: { children: React.ReactNode }) {
       // Only a live CMS public-API response may put adverts on the public app.
       // Bundle/stale ad records remain available for read-only status, but are never displayed.
       const displayAdsEnabled = result.adsOrigin === "live" && result.adsEnabled;
-      const signature = JSON.stringify({ articles: result.articles.map((a) => [a.id, a.title, a.published, a.summary, a.body?.length ?? 0, a.image ?? ""]), adsEnabled: displayAdsEnabled, adsOrigin: result.adsOrigin, cmsAds: result.cmsAds, cmsCommentsByArticleId: result.cmsCommentsByArticleId, cmsCommentSettings: result.cmsCommentSettings });
+      // Compare complete records: same-length edits, placement, media and tags must refresh too.
+      const signature = JSON.stringify({ articles: result.articles, adsEnabled: displayAdsEnabled, adsOrigin: result.adsOrigin, cmsAds: result.cmsAds, cmsCommentsByArticleId: result.cmsCommentsByArticleId, cmsCommentSettings: result.cmsCommentSettings });
       if (signature !== cmsSignatureRef.current) { cmsSignatureRef.current = signature; setCmsArticles(result.articles); setCmsAds(result.cmsAds); setCmsCommentsByArticleId(result.cmsCommentsByArticleId); setCmsCommentSettings(result.cmsCommentSettings); }
       setAdsEnabled(displayAdsEnabled);
       setCmsStatus(result.articles.length || result.origin === "live" ? { state: result.origin, at: result.at || Date.now(), count: result.articles.length } : { state: "unavailable", at: result.at, count: 0 });

@@ -16,5 +16,8 @@
     "strict": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  // Type-check the browser entry point and all of its imports, matching Vite's
+  // build graph. Historical, currently unreferenced src/ modules are checked
+  // separately by `npm run typecheck:all`; they have pre-existing errors.
+  "include": ["src/main.tsx", "src/**/*.d.ts"]
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Check, ExternalLink, Lock, Save, Send } from "lucide-react";
-import { LIMITS, REFRESH_OPTIONS, parseTags, useAuth, useControl, useNews, usePageTitle } from "./lib/providers";
+import { Link } from "react-router-dom";
+import { ExternalLink, Lock } from "lucide-react";
+import { LIMITS, REFRESH_OPTIONS, useAuth, useControl, useNews, usePageTitle } from "./lib/providers";
 import { CMS } from "./lib/data";
 
 const FIELD = "w-full border border-ink/35 bg-paper px-3.5 text-base text-ink placeholder:text-muted";
@@ -11,89 +11,9 @@ const ERR = "mt-1.5 text-[13.5px] font-bold text-brand";
 const PRIMARY = "inline-flex h-12 cursor-pointer items-center gap-2 bg-brand px-6 text-[15px] font-extrabold text-white hover:bg-brand-strong disabled:cursor-progress disabled:opacity-70";
 const CT = "block text-[15px] font-extrabold";
 const BT = "w-full border border-ink/35 bg-paper px-3.5 text-base text-ink";
-function toLocalInput(ts: number): string {
-  const d = new Date(ts); const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-async function fileToDataUrl(file: File, maxWidth = 1000): Promise<string> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => reject(new Error("That picture could not be read. Try a JPG or PNG.")); im.src = url; });
-    const scale = Math.min(1, maxWidth / (img.naturalWidth || maxWidth));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round((img.naturalWidth || 1000) * scale));
-    canvas.height = Math.max(1, Math.round((img.naturalHeight || 562) * scale));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("That picture could not be read. Try a JPG or PNG.");
-    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    const data = canvas.toDataURL("image/jpeg", 0.72);
-    if (data.length > LIMITS.imageBytes) throw new Error("That picture is still too large after resizing. Choose a smaller one.");
-    return data;
-  } finally { URL.revokeObjectURL(url); }
-}
 export function SubmitPage() {
-  usePageTitle("Write for 180news");
-  const [params] = useSearchParams();
-  const navigate = useNavigate();
-  const { articles, addArticle, sections } = useControl();
-  const { status, user } = useAuth();
-  const editId = params.get("edit") ?? undefined;
-  const existing = editId ? articles.find((a) => a.id === editId) : undefined;
-  const [form, setForm] = useState(() => ({ title: existing?.title ?? "", summary: existing?.summary ?? "", body: existing?.body ?? "", author: existing?.author ?? "", section: existing?.section ?? sections[0]?.id ?? "south-africa", tags: existing?.tags?.join(", ") ?? "", links: existing?.links?.join("\n") ?? "", image: existing?.image ?? "", publishAt: existing?.publishAt ? toLocalInput(existing.publishAt) : "" }));
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [state, setState] = useState<"idle" | "saving" | "done" | "error">("idle");
-  const [message, setMessage] = useState("");
-  const [imgError, setImgError] = useState("");
-  useEffect(() => { document.title = (existing ? `Edit: ${existing.title}` : "Write for 180news") + " | 180news"; }, [existing]);
-  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const onImage = async (file?: File | null) => { setImgError(""); if (!file) return; try { set("image", await fileToDataUrl(file)); } catch (e) { setImgError(e instanceof Error ? e.message : "That picture could not be read."); } };
-  const save = (schedule: boolean) => {
-    const errs: Record<string, string> = {};
-    if (form.title.trim().length < LIMITS.titleMin) errs.title = `The headline needs at least ${LIMITS.titleMin} characters.`;
-    if (form.title.trim().length > LIMITS.titleMax) errs.title = `Keep the headline under ${LIMITS.titleMax} characters.`;
-    if (form.author.trim().length < LIMITS.authorMin) errs.author = "Add the name readers will see.";
-    if (form.body.trim().length < LIMITS.bodyMin) errs.body = `The story needs at least ${LIMITS.bodyMin} characters.`;
-    setErrors(errs); setState("saving"); setMessage("");
-    if (Object.keys(errs).length) { setState("error"); return; }
-    const publishAt = schedule && form.publishAt ? new Date(form.publishAt).getTime() : undefined;
-    const result = addArticle({ title: form.title.trim(), summary: form.summary.trim().slice(0, LIMITS.summaryMax), body: form.body.trim(), author: form.author.trim(), section: form.section, tags: parseTags(form.tags), links: form.links.split(/\n+/).map((s) => s.trim()).filter((s) => /^https:\/\//.test(s)).slice(0, 6), image: form.image ? form.image : undefined, publishAt }, existing?.id);
-    if (result.ok) { setState("done"); setMessage(schedule && publishAt ? "Saved and scheduled. It goes live at the time you set." : "Saved. It is live on this device now."); window.setTimeout(() => navigate(`/story/${result.id}`), 900); }
-    else { setState("error"); setMessage(result.error ?? "The article could not be saved."); }
-  };
-  if (status !== "signed-in" || !user) return (
-    <div className="wrap max-w-[620px] pt-7 md:pt-10">
-      <h1 className="text-4xl font-black uppercase leading-none tracking-[-0.02em]">Write for 180news</h1>
-      <p className="mt-4 text-[17px] leading-relaxed text-body">The writing desk is for the 180news team. <Link to="/admin" className="font-bold text-navy underline">Sign in</Link> to continue, or <Link to="/" className="font-bold text-navy underline">go back to the news</Link>.</p>
-    </div>
-  );
-  return (
-    <div className="wrap max-w-[720px] pt-7 md:pt-10">
-      <header className="relative border-t border-line pt-4 before:absolute before:-top-px before:left-0 before:h-1.5 before:w-24 before:bg-brand before:content-['']">
-        <h1 className="text-4xl font-black uppercase leading-none tracking-[-0.02em] md:text-5xl">{existing ? "Edit article" : "Write for 180news"}</h1>
-        <p className="mt-2 max-w-[60ch] text-[15px] text-muted">Everything is stored in this browser only. Sign in as the owner on another device and use the backup in the Control panel to move work between them.</p>
-      </header>
-      <form className="mt-8 space-y-5" onSubmit={(e) => { e.preventDefault(); save(false); }}>
-        <div><label htmlFor="title" className={LABEL}>Headline</label><input id="title" value={form.title} onChange={(e) => set("title", e.target.value)} maxLength={LIMITS.titleMax} className={FIELD} />{errors.title && <p className={ERR}>{errors.title}</p>}</div>
-        <div><label htmlFor="summary" className={LABEL}>Standfirst (optional)</label><textarea id="summary" rows={2} value={form.summary} onChange={(e) => set("summary", e.target.value)} maxLength={LIMITS.summaryMax} className={FIELD} /><p className={HINT}>One or two sentences shown under the headline, up to {LIMITS.summaryMax} characters.</p></div>
-        <div><label htmlFor="body" className={LABEL}>Story</label><textarea id="body" rows={12} value={form.body} onChange={(e) => set("body", e.target.value)} maxLength={LIMITS.bodyMax} className={FIELD} />{errors.body && <p className={ERR}>{errors.body}</p>}<p className={HINT}>Leave a blank line between paragraphs.</p></div>
-        <div className="grid gap-5 sm:grid-cols-2">
-          <div><label htmlFor="author" className={LABEL}>Your name</label><input id="author" value={form.author} onChange={(e) => set("author", e.target.value)} maxLength={LIMITS.authorMax} className={FIELD} />{errors.author && <p className={ERR}>{errors.author}</p>}</div>
-          <div><label htmlFor="section" className={LABEL}>Section</label><select id="section" value={form.section} onChange={(e) => set("section", e.target.value)} className={FIELD}>{sections.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select></div>
-        </div>
-        <div><label htmlFor="tags" className={LABEL}>Tags (optional)</label><input id="tags" value={form.tags} onChange={(e) => set("tags", e.target.value)} className={FIELD} placeholder="water, Rand Water, Johannesburg" /><p className={HINT}>Up to five, separated by commas. Readers reach them at /tag/… addresses.</p></div>
-        <div><label htmlFor="links" className={LABEL}>Links in the story (optional)</label><textarea id="links" rows={2} value={form.links} onChange={(e) => set("links", e.target.value)} className={FIELD} placeholder={"https://…\nhttps://…"} /><p className={HINT}>One web address per line, up to six.</p></div>
-        <div><label htmlFor="picture" className={LABEL}>Picture (optional)</label><input id="picture" type="file" accept="image/*" onChange={(e) => onImage(e.target.files?.[0])} className="mt-1 block w-full text-[15px]" />{imgError && <p className={ERR}>{imgError}</p>}{form.image && <div className="mt-2 flex items-center gap-3"><img src={form.image} alt="" className="h-20 w-auto border border-line" /><button type="button" onClick={() => set("image", "")} className="cursor-pointer text-sm font-bold text-brand hover:underline">Remove picture</button></div>}</div>
-        <div><label htmlFor="publishAt" className={LABEL}>Schedule for later (optional)</label><input id="publishAt" type="datetime-local" value={form.publishAt} onChange={(e) => set("publishAt", e.target.value)} className={FIELD} /><p className={HINT}>Set a time and use “Schedule” below. The article appears on the front page when the time arrives.</p></div>
-        <div className="flex flex-wrap gap-3 pt-2">
-          <button type="submit" className={PRIMARY} disabled={state === "saving"}>{existing ? <Save size={17} strokeWidth={2.5} aria-hidden="true" /> : <Send size={17} strokeWidth={2.5} aria-hidden="true" />}{existing ? "Save changes" : "Publish now"}</button>
-          <button type="button" onClick={() => save(true)} disabled={state === "saving" || !form.publishAt} className="inline-flex h-12 cursor-pointer items-center gap-2 border-2 border-navy px-6 text-[15px] font-extrabold text-navy transition-colors hover:bg-navy hover:text-white disabled:cursor-not-allowed disabled:opacity-60">Schedule</button>
-          {existing && <Link to={`/story/${existing.id}`} className="inline-flex h-12 items-center px-3 text-[15px] font-bold text-navy hover:underline">View the article</Link>}
-        </div>
-        {state === "done" && <p role="status" className="flex items-center gap-2 text-[15px] font-bold text-[#0b5a2e]"><Check size={17} strokeWidth={2.8} aria-hidden="true" /> {message}</p>}
-        {state === "error" && <p role="alert" className={ERR}>{message}</p>}
-      </form>
-    </div>
-  );
+  usePageTitle("Newsroom writing");
+  return <div className="wrap max-w-[720px] pt-7 md:pt-10"><h1 className="text-4xl font-black uppercase">Writing has moved</h1><p className="mt-4 text-[17px] text-body">Write, edit and schedule stories in the connected newsroom CMS.</p><a href="https://cms.180news.co.za/" className="mt-6 inline-flex h-12 items-center bg-brand px-6 font-extrabold text-white">Open the newsroom CMS</a></div>;
 }
 function Toggle({ label, checked, onChange, disabled = false, note }: { label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; note?: string }) {
   return (
@@ -168,7 +88,7 @@ export function ControlPage() {
           <label className={`${CT} mt-3`}>Crawl speed</label>
           <select value={settings.crawlSpeed} onChange={(e) => update({ crawlSpeed: e.target.value as "slow" | "normal" | "fast" })} className={BT}><option value="slow">Slow</option><option value="normal">Normal</option><option value="fast">Fast</option></select>
           <label className={`${CT} mt-4`} htmlFor="notice">Notice in the crawl</label>
-          <input id="notice" value={settings.crawlMessage} maxLength={140} onChange={(e) => update({ crawlMessage: e.target.value })} className={BT} placeholder="e.g. 180news is in beta — tell us what you think" />
+          <input id="notice" value={settings.crawlMessage} maxLength={140} onChange={(e) => update({ crawlMessage: e.target.value })} className={BT} placeholder="Add a newsroom notice" />
         </section>
         <section className="border border-line bg-paper p-5">
           <h2 className="text-[12.5px] font-black uppercase tracking-[0.06em] text-muted">Refresh</h2>
@@ -255,46 +175,5 @@ export function AdminAdsPage() {
     </AdminShell>
   );
 }
-export function AdminScheduledPage() {
-  usePageTitle("Admin — scheduled");
-  const { articles, publishNow, removeArticle } = useControl();
-  const scheduled = articles.filter((a) => (a.publishAt ?? 0) > Date.now()).sort((a, b) => (a.publishAt ?? 0) - (b.publishAt ?? 0));
-  return (
-    <AdminShell title="Scheduled" intro="Articles waiting for their moment. They appear on the front page when the clock catches up.">
-      {scheduled.length === 0 ? <p className="border border-dashed border-line bg-wash px-6 py-10 text-center text-[16px] text-body">Nothing is scheduled. To schedule an article, choose “Schedule for later” at the end of the article form.</p> : (
-        <ul className="divide-y divide-line border-y border-line">{scheduled.map((a) => (
-          <li key={a.id} className="flex items-start justify-between gap-4 py-4">
-            <div className="min-w-0"><p className="text-[17px] font-extrabold leading-[1.25]">{a.title}</p><p className="mt-1 text-[13px] text-muted">Goes live {new Date(a.publishAt ?? 0).toLocaleString("en-ZA")}</p></div>
-            <div className="flex shrink-0 flex-col gap-2">
-              <button type="button" onClick={() => publishNow(a.id)} className="inline-flex h-11 cursor-pointer items-center rounded-full border-2 border-navy px-4 text-sm font-extrabold text-navy transition-colors hover:bg-navy hover:text-white">Publish now</button>
-              <button type="button" onClick={() => removeArticle(a.id)} className="inline-flex h-11 cursor-pointer items-center rounded-full border border-line px-4 text-sm font-bold text-brand hover:border-brand">Delete</button>
-            </div>
-          </li>
-        ))}</ul>
-      )}
-    </AdminShell>
-  );
-}
-export function AdminTagsPage() {
-  usePageTitle("Admin — tags");
-  const { articles, renameTag, deleteTag } = useControl();
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const counts = new Map<string, { name: string; count: number; mixed: boolean }>();
-  for (const a of articles) for (const t of a.tags ?? []) { const key = t.toLowerCase(); const cur = counts.get(key); if (cur) { cur.count += 1; if (cur.name !== t) cur.mixed = true; } else counts.set(key, { name: t, count: 1, mixed: false }); }
-  return (
-    <AdminShell title="Tags" intro="Tags link stories together. Fix a spelling once and every story carries the correction.">
-      {counts.size === 0 ? <p className="border border-dashed border-line bg-wash px-6 py-10 text-center text-[16px] text-body">No tags yet. Add tags to an article in the writing desk.</p> : (
-        <ul className="divide-y divide-line border-y border-line">{[...counts.entries()].map(([key, v]) => (
-          <li key={key} className="py-4"><div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-[16px] font-extrabold">{v.name} <span className="text-[13.5px] font-bold text-muted">· {v.count} {v.count === 1 ? "story" : "stories"}</span>{v.mixed && <span className="ml-2 rounded-full bg-[#fdf1d4] px-2.5 py-0.5 text-[12px] font-bold text-[#6b4a00]">Mixed capitalisation</span>}</p>
-            <div className="flex items-center gap-2">
-              <input value={drafts[key] ?? ""} onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))} placeholder="New spelling" className="h-11 w-40 border border-ink/35 bg-paper px-3 text-[15px]" aria-label={`Rename ${v.name}`} />
-              <button type="button" onClick={() => { renameTag(key, (drafts[key] ?? "").trim()); setDrafts((d) => ({ ...d, [key]: "" })); }} className="inline-flex h-11 cursor-pointer items-center rounded-full border-2 border-navy px-4 text-sm font-extrabold text-navy transition-colors hover:bg-navy hover:text-white">Rename</button>
-              <button type="button" onClick={() => deleteTag(key)} className="inline-flex h-11 cursor-pointer items-center rounded-full border border-line px-4 text-sm font-bold text-brand hover:border-brand">Delete tag</button>
-            </div>
-          </div></li>
-        ))}</ul>
-      )}
-    </AdminShell>
-  );
-}
+export function AdminScheduledPage() { return <SubmitPage />; }
+export function AdminTagsPage() { return <SubmitPage />; }

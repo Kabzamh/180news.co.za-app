@@ -386,7 +386,6 @@ function ArticleForwardIcons({ item }: { item: NewsItem }) {
 export function StoryPage() {
   const { id = "" } = useParams();
   const { byId, bySection, all, now } = useNews();
-  const { articles: ownArticles, liveAt } = useControl();
   const { saved } = useSaved();
   const liveItem = byId.get(id);
   const numericCmsId = cmsNumericId(id);
@@ -413,11 +412,8 @@ export function StoryPage() {
   // them as authority; older stories are fetched individually instead.
   const item = liveItem ?? (numericCmsId !== null && lookup.id === id ? lookup.item : null) ?? (savedItem && !isCmsItem(savedItem) ? savedItem : undefined);
   const verifyingCms = numericCmsId !== null && !liveItem && (lookup.id !== id || lookup.pending);
-  const own = ownArticles.find((a) => a.id === id);
-  const scheduled = !!own && (own.publishAt ?? 0) > liveAt;
-  const takenDown = !!own?.hidden;
-  const exists = !!item || !!own;
-  usePageTitle(exists && item ? item.title : exists ? own?.title : undefined);
+  const exists = !!item;
+  usePageTitle(item?.title);
   const relatedSame = item ? (bySection[item.section] ?? []).filter((x) => x.id !== item.id).slice(0, 6) : [];
   const picks = useMemo(() => {
     const seen = new Set([item?.id ?? id]);
@@ -456,8 +452,6 @@ export function StoryPage() {
     <div className="pt-6 md:pt-9">
       <div className={`wrap ${isCms ? "" : "grid gap-x-12 gap-y-12 lg:grid-cols-12"}`}>
         <article className={isCms ? "" : "lg:col-span-8"}>
-          {scheduled && <p role="status" className="mb-5 border-l-4 border-warn bg-[#fdf1d4] px-4 py-3 text-[15px] font-bold leading-snug text-[#6b4a00]">This article is scheduled. It goes live on the front page {own?.publishAt ? dateTimeSAST(own.publishAt) : ""}. Only this device can see it.</p>}
-          {takenDown && <p role="status" className="mb-5 border-l-4 border-warn bg-[#fdf1d4] px-4 py-3 text-[15px] font-bold leading-snug text-[#6b4a00]">This article is taken down. It is not on the app.</p>}
           <nav aria-label="Breadcrumb"><ol className="flex flex-wrap items-center gap-1.5 text-[13px] font-bold">
             <li><Link to="/" className="text-muted hover:text-brand hover:underline">Home</Link></li>
             {section && <li className="flex items-center gap-1.5"><ChevronRight size={14} className="text-muted" aria-hidden="true" /><Link to={`/section/${section.id}`} className="uppercase tracking-[0.04em] text-brand hover:underline">{section.label}</Link></li>}
@@ -478,7 +472,6 @@ export function StoryPage() {
             <>
               <div className="mt-6 max-w-[64ch] space-y-5 text-[18px] leading-[1.7] text-body">{(item.body ?? "").split(/\n\s*\n/).map((p, i) => <p key={i}>{p}</p>)}</div>
               {item.links && item.links.length > 0 && <LinkEmbeds links={item.links} />}
-              {own && <div className="mt-6 max-w-[64ch] rounded-sm bg-wash px-4 py-3 text-[14px] text-body">Written for 180news by {own.author}. Stored only in this browser — it shows on this device only.</div>}
               {item.media && <MediaBlock item={item} position="after" />}
             </>
           ) : isCms ? (
@@ -506,11 +499,11 @@ export function StoryPage() {
                 <ul className="flex flex-wrap gap-2">{item.tags.map((t) => <li key={t}><Link to={tagPath(t)} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm font-bold text-ink hover:border-navy hover:text-navy">{t}</Link></li>)}</ul>
               </div>
             )}
-            {!scheduled && !takenDown && <ArticleForwardIcons item={item} />}
+            <ArticleForwardIcons item={item} />
           </div>
-          {!scheduled && !takenDown && <ArticleComments key={item.id} item={item} />}
+          <ArticleComments key={item.id} item={item} />
           {source && <p className="mt-4 border-t border-line pt-4 text-sm text-muted">More from <a href={source.home} target="_blank" rel="noopener noreferrer" className="font-bold text-navy underline">{source.name}</a></p>}
-          {!scheduled && <AdSlot id="article" at="inline" className="mt-9" />}
+          <AdSlot id="article" at="inline" className="mt-9" />
         </article>
         {!isCms && picks.sidebar.length > 0 && section && (
           <aside aria-labelledby="story-related" className="lg:col-span-4">
@@ -519,7 +512,7 @@ export function StoryPage() {
           </aside>
         )}
       </div>
-      {!scheduled && <AdSlot id="article" at="below" className="wrap mt-12" />}
+      <AdSlot id="article" at="below" className="wrap mt-12" />
       {!isCms && picks.bottom.length > 0 && (
         <section aria-labelledby="story-more" className="wrap mt-14">
           <SectionHead id="story-more" title="Latest headlines" to="/latest" moreLabel="See all" />

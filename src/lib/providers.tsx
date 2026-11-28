@@ -775,7 +775,7 @@ function fetchCmsArticles(force = false): Promise<CmsSyncResult> {
 }
 
 export function NewsProvider({ children }: { children: React.ReactNode }) {
-  const { settings, articles: ownArticles, liveAt } = useControl();
+  const { settings } = useControl();
   const hiddenSections = settings.hiddenSections; const hiddenSources = settings.hiddenSources;
   const refreshMs = settings.refreshMinutes * 60000;
   const [initialCache] = useState(loadCache);
@@ -916,12 +916,6 @@ export function NewsProvider({ children }: { children: React.ReactNode }) {
     for (const sec of SECTIONS) {
       const items: NewsItem[] = []; const ids = new Set<string>(); const titles = new Set<string>();
       if (hiddenSections.includes(sec.id)) { bySection[sec.id] = items; continue; }
-      for (const own of ownArticles) {
-        if (own.section !== sec.id || own.hidden || (own.publishAt ?? 0) > liveAt) continue;
-        const item = ownToNews(own); items.push(item); ids.add(item.id); byId.set(item.id, item); all.push(item);
-        if (own.pinned) featured = item;
-        if (own.headline) headlines.push(item);
-      }
       for (const cms of cmsArticles) {
         if (cms.section !== sec.id) continue;
         const key = titleKey(cms);
@@ -945,7 +939,7 @@ export function NewsProvider({ children }: { children: React.ReactNode }) {
     }
     all.sort(byPublished); headlines.sort(byPublished);
     return { bySection, byId, all, featured, headlines };
-  }, [feeds, ownArticles, cmsArticles, liveAt, hiddenSections, hiddenSources]);
+  }, [feeds, cmsArticles, hiddenSections, hiddenSources]);
   const feedsWithCms = useMemo<Record<string, FeedState>>(() => ({
     ...feeds,
     [CMS_FEED_ID]: { items: cmsArticles, origin: "cms", fetchedAt: cmsStatus.at, ...(cmsStatus.state === "unavailable" ? { error: "CMS unreachable" } : {}) },
